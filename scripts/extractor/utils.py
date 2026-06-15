@@ -22,6 +22,8 @@ from extractor.config import (
     HTML_EXTENSIONS,
     CALIBRE_EBOOK_EXTENSIONS,
     supported_formats_message,
+    per_source_workdir,
+    env_workdir_pinned,
 )
 from extractor.dependencies import (
     normalize_install_mode,
@@ -165,17 +167,30 @@ def detect_structure(text: str) -> dict:
     Scans the whole text (not just the head) and counts DISTINCT chapter numbers
     from explicit "Chapter N"/"Capítulo N" headings, rejecting prose
     cross-references and numbered list items. Counting distinct numbers means a
-    ToC entry and its body heading are not double-counted.
+    ToC entry and a body heading are not double-counted.
+
+    Also builds an ordered ``chapter_map`` of the FIRST occurrence of each
+    distinct chapter number (the ToC entry, when one exists), recording its
+    1-based line number in the flattened text. This lets the wiki generator
+    plan chapter notes without re-scanning, and lets ``sed -n``/``grep`` jump
+    to a chapter span directly.
     """
     lines = text.splitlines()
 
     headings = []
     numbers = set()
-    for line in lines:
+    # Preserve first occurrence per chapter number, in document order.
+    # Each entry: {"n": int, "title": str, "line": int (1-based)}
+    chapter_map: list[dict] = []
+    seen_for_map: set[int] = set()
+    for idx, line in enumerate(lines, start=1):
         num = _chapter_number(line)
         if num is not None:
             numbers.add(num)
             headings.append(line.strip())
+            if num not in seen_for_map:
+                seen_for_map.add(num)
+                chapter_map.append({"n": num, "title": line.strip(), "line": idx})
     chapters_detected = len(numbers)
 
     # Look for ToC indicators in the first ~30k chars
@@ -189,6 +204,7 @@ def detect_structure(text: str) -> dict:
         "chapters_detected": chapters_detected,
         "chapter_headings_sample": headings[:10],
         "has_toc": has_toc,
+        "chapter_map": chapter_map,
     }
 
 
@@ -470,6 +486,48 @@ def print_banner() -> None:
         pass  # best-effort: never block extraction on the banner
 
 
+def resolve_workdir(argv: list[str], input_files: list[Path]) -> tuple[Path, Path, Path]:
+    """Resolve (output_dir, output_text, output_meta) for this run.
+
+    Precedence (highest first):
+      1. ``--workdir <path>`` CLI flag.
+      2. ``BOOK_SKILL_WORKDIR`` env var (pin-to-one-dir legacy mode).
+      3. Otherwise: an isolated per-source subdirectory under the default base,
+         so back-to-back extractions of different books no longer clobber.
+
+    Tests that want a specific directory should set ``BOOK_SKILL_WORKDIR`` via
+    ``monkeypatch.setenv`` (already done in the existing suite) or pass
+    ``--workdir``. Module-level ``OUTPUT_DIR`` is honored only as the env-pin
+    target (case 2), keeping the legacy patch surface working.
+    """
+    # (1) explicit flag
+    flag_dir = _read_flag(argv, "--workdir")
+    if flag_dir:
+        out_dir = Path(flag_dir)
+        return out_dir, out_dir / "full_text.txt", out_dir / "metadata.json"
+
+    # (2) env pin (also covers tests that do monkeypatch.setenv("BOOK_SKILL_WORKDIR", ...))
+    if env_workdir_pinned():
+        return OUTPUT_DIR, OUTPUT_TEXT, OUTPUT_META
+
+    # (3) per-source isolation (new default)
+    ident = str(input_files[0]) if input_files else "source"
+    out_dir = per_source_workdir(ident)
+    return out_dir, out_dir / "full_text.txt", out_dir / "metadata.json"
+
+
+def _read_flag(argv: list[str], name: str) -> str | None:
+    """Return the value following ``name`` in argv, or None."""
+    args = argv[1:]
+    for i, a in enumerate(args):
+        if a == name and i + 1 < len(args):
+            return args[i + 1]
+        # also accept --workdir=PATH form
+        if a.startswith(f"{name}="):
+            return a.split("=", 1)[1]
+    return None
+
+
 def main():
     print_banner()
 
@@ -477,7 +535,7 @@ def main():
         sys.exit(run_dependency_check())
 
     if len(sys.argv) < 2:
-        print("Usage: extract.py <path-to-document-folder-or-glob>... [--mode technical|text] [--install-missing ask|yes|no]", file=sys.stderr)
+        print("Usage: extract.py <path-to-document-folder-or-glob>... [--mode technical|text] [--install-missing ask|yes|no] [--workdir <path>]", file=sys.stderr)
         print("       extract.py --check    # report which extractors are installed", file=sys.stderr)
         print(f"Supported formats: {supported_formats_message()}", file=sys.stderr)
         sys.exit(1)
@@ -493,8 +551,11 @@ def main():
     if not input_files:
         print(f"ERROR: No supported files found matching: {', '.join(raw_input_paths)}", file=sys.stderr)
         sys.exit(1)
-        
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Resolve an isolated work directory for this run (see resolve_workdir).
+    # Falls back to the legacy shared dir when BOOK_SKILL_WORKDIR is set.
+    out_dir, out_text, out_meta = resolve_workdir(sys.argv, input_files)
+    out_dir.mkdir(parents=True, exist_ok=True)
     
     extracted_sources = []
     combined_texts = []
@@ -523,7 +584,7 @@ def main():
     consolidated_text = "".join(combined_texts).strip()
     
     # Write combined text
-    OUTPUT_TEXT.write_text(consolidated_text, encoding="utf-8")
+    out_text.write_text(consolidated_text, encoding="utf-8")
     
     # Consolidate metadata
     total_file_size_mb = sum(src["file_size_mb"] for src in extracted_sources)
@@ -547,7 +608,7 @@ def main():
         "words": total_words,
         "estimated_tokens": total_tokens,
         "estimated_tokens_human": f"~{total_tokens // 1000}K",
-        "output_text": str(OUTPUT_TEXT),
+        "output_text": str(out_text),
         "total_sources": len(extracted_sources),
         "sources": [
             {
@@ -569,7 +630,7 @@ def main():
         **consolidated_structure,
     }
     
-    OUTPUT_META.write_text(json.dumps(metadata, indent=2, ensure_ascii=False))
+    out_meta.write_text(json.dumps(metadata, indent=2, ensure_ascii=False))
     
     page_line = f"   Total Pages: {total_pages}"
     print("\nExtraction complete:")
@@ -585,8 +646,8 @@ def main():
             "   WARN    : No table of contents detected — chapter mapping in Step 3 "
             "will rely on heading scan only, which may miss or duplicate sections."
         )
-    print(f"\n   Text -> {OUTPUT_TEXT}")
-    print(f"   Meta -> {OUTPUT_META}")
+    print(f"\n   Text -> {out_text}")
+    print(f"   Meta -> {out_meta}")
     if errors:
         print(f"\n   WARNING: {len(errors)} source(s) skipped due to errors:")
         for path, err in errors:

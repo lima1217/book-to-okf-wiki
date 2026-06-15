@@ -6,6 +6,16 @@ import zipfile
 from extractor.parsers.html import _HTMLTextExtractor
 
 
+def _section_marker(index: int, href: str) -> str:
+    """Boundary marker injected before each EPUB spine item's text.
+
+    Lets downstream consumers (the wiki generator, or `grep`/`sed`) locate
+    chapter/section spans in the flattened text without re-parsing the EPUB.
+    Format: ``=== EPUB-SECTION <n>: <href> ===``
+    """
+    return f"\n=== EPUB-SECTION {index}: {href} ===\n"
+
+
 def extract_with_ebooklib(epub_path: str) -> str | None:
     try:
         import ebooklib
@@ -14,9 +24,13 @@ def extract_with_ebooklib(epub_path: str) -> str | None:
 
         book = epub.read_epub(epub_path)
         parts = []
+        section_index = 0
         for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
+            href = getattr(item, "get_name", lambda: "")() or ""
+            section_index += 1
             soup = BeautifulSoup(item.get_content(), "html.parser")
-            parts.append(soup.get_text(separator="\n"))
+            text = soup.get_text(separator="\n")
+            parts.append(_section_marker(section_index, href) + text)
         return "\n\n".join(parts)
     except ImportError:
         return None
@@ -71,12 +85,14 @@ def extract_with_zipfile(epub_path: str) -> str | None:
                 return None
 
             parts = []
+            section_index = 0
             for name in html_files:
                 try:
                     raw = zf.read(name).decode("utf-8", errors="replace")
                     parser = _HTMLTextExtractor()
                     parser.feed(raw)
-                    parts.append(parser.get_text())
+                    section_index += 1
+                    parts.append(_section_marker(section_index, name) + parser.get_text())
                 except Exception:
                     continue
             return "\n\n".join(parts) if parts else None

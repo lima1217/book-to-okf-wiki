@@ -103,15 +103,53 @@ try:
 except ModuleNotFoundError as exc:
     print(f"missing: {exc.name}")
 PY
-"$PYTHON_BIN" "$SCRIPT_PATH" $INPUT_PATHS --mode <BOOK_TYPE> --install-missing ask
+"$PYTHON_BIN" "$SCRIPT_PATH" $INPUT_PATHS --mode <BOOK_TYPE> --install-missing ask [--workdir <path>]
 ```
 
-This creates:
+This creates (under a work directory — see the isolation note below):
 
-- `<tempdir>/book_okf_wiki_work/full_text.txt`
-- `<tempdir>/book_okf_wiki_work/metadata.json`
+- `<workdir>/full_text.txt`
+- `<workdir>/metadata.json`
 
 Read `metadata.json` before continuing.
+
+> **Work directory isolation (important).** Each extraction now writes to an
+> **isolated per-source** subdirectory by default
+> (`<tempdir>/book_okf_wiki_work/<stem>-<hash>/`), so extracting a different
+> book no longer overwrites a previous extraction's files. To pin a fixed
+> directory instead, pass `--workdir <path>` or set `BOOK_SKILL_WORKDIR`.
+> If you set neither, read the actual `<workdir>` path from the extractor's
+> stdout (`Text ->` / `Meta ->` lines) — do **not** assume the legacy
+> `<tempdir>/book_okf_wiki_work/` path, and never assume a prior extraction's
+> files are still there.
+
+**Chapter boundary markers.** EPUB extraction now injects a marker line
+before each spine item:
+
+```text
+=== EPUB-SECTION <n>: <href> ===
+```
+
+Use `grep -n "EPUB-SECTION" full_text.txt` to locate chapter/section spans
+quickly, instead of guessing line numbers or re-scanning headings.
+
+**Chapter map in metadata.** `metadata.json` now includes a `chapter_map`
+array under each source and in the consolidated structure:
+
+```json
+"chapter_map": [
+  {"n": 1, "title": "Chapter 1: Origins", "line": 1072},
+  ...
+]
+```
+
+`line` is the 1-based line in `full_text.txt` of the heading's first
+occurrence (usually the ToC entry). Use it to plan chapter notes and to
+`sed -n '<line>,<next_line>p'` a single chapter's span when deep-reading.
+Note: `chapter_map` only captures headings the detector recognizes
+(`Chapter N` / `第N章` / Roman numerals with titles). Books with
+non-standard headings (e.g. titled sections like "Learning", "Other minds")
+will have `chapter_map: []` — fall back to the `EPUB-SECTION` markers.
 
 For large books over ~50k tokens, do not load `full_text.txt` all at once. Use `rg`, `grep`, `sed`, `wc`, and bounded reads to inspect sections.
 
@@ -295,6 +333,82 @@ timestamp: <ISO time>
 
 For technical books, preserve compact code snippets, commands, tables, and API names when they are essential. Avoid long verbatim excerpts.
 
+## Step 8b: Deep-Read Subsections (when a chapter warrants it)
+
+Some chapters carry the book's core arguments densely, or are long and
+multi-part. When the user asks to **deep-read** a chapter, or you find a
+chapter contains claims/frameworks that later chapters depend on, split it
+into per-subsection notes instead of one recap.
+
+### When to do this
+
+- The user explicitly asks to deep-read or extract detailed notes for a chapter.
+- A chapter contains the book's load-bearing thesis (e.g. a definition, a
+  named framework, a multi-point manifesto) that other chapters build on.
+- A chapter is long (>~400 lines of extracted text) and has clearly named
+  subsections.
+
+### Directory layout
+
+Put subsection notes under `chapters/subsections/`, named
+`ch<NN>-s<MM>-<slug>.md` so they sort naturally and stay out of the top-level
+`chapters/` listing:
+
+```text
+chapters/
+├── index.md
+├── ch04-learning.md            ← chapter overview (links subsections)
+└── subsections/
+    ├── index.md
+    ├── log.md
+    ├── ch04-s01-unkneading.md
+    └── ch04-s09-beyond-reward.md
+```
+
+`chapters/subsections/` must have its own `index.md` and `log.md` (the
+validator treats any directory with `.md` content as needing an index).
+
+### Subsection frontmatter
+
+```yaml
+---
+type: ChapterNote
+title: Ch4 §1 - Unkneading
+description: <what this subsection argues>
+source_refs: [source-001]
+chapter_refs: [ch04]          # parent chapter only; no per-subsection ref needed
+tags: [subsection, ch04, <topic>]
+status: active
+timestamp: <ISO time>
+---
+```
+
+Use the `subsection` tag plus a `ch<NN>` tag so subsections are easy to
+filter. Optionally add a `core-thesis` tag to subsections that carry the
+book's load-bearing claims.
+
+### Linking rules (this is what makes subsections discoverable)
+
+1. **Within the chapter**: each subsection links to the previous and next
+   subsection, and to the chapter overview.
+2. **Chapter overview gets a subsection table**: add a `## Subsection notes`
+   section to the chapter overview page listing every subsection with a
+   one-line description.
+3. **Core-thesis reachability (Quality Rule 9)**: any subsection that states a
+   load-bearing claim **must be linked back from the relevant concept page**,
+   not only from the chapter. Otherwise the core argument is buried and an
+   agent reading the concept page will miss its source of truth.
+4. **Glossary**: terms coined or defined in a subsection should be added to
+   `glossary/terms.md` with a link back to the subsection.
+
+### Updating indexes
+
+After writing subsections, update:
+- the chapter overview page (subsection table),
+- `chapters/index.md` (list the subsections under the chapter entry),
+- `subsections/index.md` (the directory's own index),
+- and append to `chapters/log.md` + `subsections/log.md`.
+
 ## Step 9: Generate Concept Pages
 
 Create one page per durable concept in `concepts/`.
@@ -446,6 +560,17 @@ Validation must check:
 
 Fix errors before reporting completion. Warnings are acceptable only if explained.
 
+After the package passes, optionally run the advisory `--strict` mode to
+catch quality issues the shape check can't see:
+
+```bash
+python3 tools/validate_okf_wiki.py --strict .
+```
+
+`--strict` prints (never fails on) notes about: orphan pages nothing links
+to, a missing or empty `glossary/terms.md`. Use it as a self-check before
+declaring done; address the notes that point at real gaps.
+
 ## Update Existing Wiki Workflow
 
 When updating an existing package:
@@ -461,6 +586,11 @@ When updating an existing package:
 9. Append to root `log.md` and affected directory `log.md`.
 10. Run validation.
 
+When **deep-reading new chapters** (Step 8b): add a back-link from each
+existing concept page to any new subsection that states a load-bearing claim
+(Quality Rule 9), so the core argument stays reachable from the concept
+layer.
+
 Never silently overwrite existing concept pages. Merge by preserving useful prior content, adding source references, and noting uncertainty when sources disagree.
 
 ## Quality Rules
@@ -473,6 +603,7 @@ Never silently overwrite existing concept pages. Merge by preserving useful prio
 6. Make navigation obvious for agents.
 7. Put uncertainty into `questions/open-questions.md` instead of pretending the book is complete truth.
 8. Keep the package self-contained: the core understanding should survive if external URLs disappear, while citations still point outward when available.
+9. Core theses must be bidirectionally reachable: any subsection that states a load-bearing claim must be linked back from the relevant concept page, not only from its chapter — otherwise the argument is buried and an agent reading the concept page misses its source of truth.
 
 ## Completion Report
 

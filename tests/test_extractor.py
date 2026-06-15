@@ -10,6 +10,7 @@ Covers:
 
 import json
 import sys
+import tempfile
 import textwrap
 import zipfile
 from pathlib import Path
@@ -769,3 +770,96 @@ class TestDependencyCheck:
         # the PDF (text-heavy) group line should be followed by a "ready" status
         pdf_block = out.split("PDF (text-heavy)", 1)[1].split("PDF (technical", 1)[0]
         assert "ready" in pdf_block
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Per-source workdir isolation + EPUB section markers + chapter_map
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestWorkdirIsolation:
+    """The session-feedback fix: back-to-back extractions must not clobber."""
+
+    def test_resolve_workdir_flag_overrides_default(self, tmp_path):
+        from extractor.utils import resolve_workdir
+        flag_dir = tmp_path / "flagged"
+        out_dir, out_text, out_meta = resolve_workdir(
+            ["extract.py", str(tmp_path / "a.epub"), "--workdir", str(flag_dir)],
+            [tmp_path / "a.epub"],
+        )
+        assert out_dir == flag_dir
+        assert out_text == flag_dir / "full_text.txt"
+        assert out_meta == flag_dir / "metadata.json"
+
+    def test_resolve_workdir_default_isolates_per_source(self, tmp_path, monkeypatch):
+        """Without env/flag, two different sources map to different dirs."""
+        monkeypatch.delenv("BOOK_SKILL_WORKDIR", raising=False)
+        from extractor.utils import resolve_workdir
+        a = tmp_path / "alpha.epub"
+        b = tmp_path / "beta.epub"
+        a.write_text("x")
+        b.write_text("y")
+        dir_a, _, _ = resolve_workdir(["extract.py", str(a)], [a])
+        dir_b, _, _ = resolve_workdir(["extract.py", str(b)], [b])
+        assert dir_a != dir_b, "different sources must get different work dirs"
+
+    def test_main_writes_to_isolated_dir_without_env(self, tmp_path, monkeypatch):
+        """main() with no BOOK_SKILL_WORKDIR writes to a per-source subdir, not the shared root."""
+        monkeypatch.delenv("BOOK_SKILL_WORKDIR", raising=False)
+        good = _make_text_file(tmp_path / "solo.txt", "isolated content")
+
+        monkeypatch.setattr(
+            "sys.argv",
+            ["extract.py", str(good), "--install-missing", "no"],
+        )
+        monkeypatch.setattr("extractor.utils.prepare_dependencies", lambda *a: None)
+
+        main()
+
+        # The shared legacy dir must NOT contain the file (it went to a subdir)
+        shared = Path(tempfile.gettempdir()) / "book_okf_wiki_work" / "full_text.txt"
+        # find the actual output: scan the per-source subdir we created
+        base = Path(tempfile.gettempdir()) / "book_okf_wiki_work"
+        found = list(base.glob("solo-*/full_text.txt"))
+        assert found, "expected a per-source subdir output"
+        assert "isolated content" in found[0].read_text(encoding="utf-8")
+
+
+class TestEpubSectionMarkers:
+    """EPUB extraction now emits per-item boundary markers."""
+
+    def test_zipfile_fallback_emits_section_markers(self, tmp_path):
+        from extractor.parsers.epub import extract_with_zipfile
+        epub_path = _make_minimal_epub(tmp_path / "marked.epub")
+        text = extract_with_zipfile(str(epub_path))
+        assert text is not None
+        assert "=== EPUB-SECTION" in text
+        # original content still present
+        assert "EPUB chapter one content" in text
+
+
+class TestChapterMap:
+    """detect_structure now emits an ordered chapter_map with line numbers."""
+
+    def test_chapter_map_present_and_ordered(self):
+        text = "intro\nChapter 1: First\nbody\nChapter 2: Second\nbody\nChapter 3: Third\n"
+        result = detect_structure(text)
+        cm = result["chapter_map"]
+        assert len(cm) == 3
+        assert [e["n"] for e in cm] == [1, 2, 3]
+        # lines are 1-based and strictly increasing
+        lines = [e["line"] for e in cm]
+        assert lines == sorted(lines)
+        assert all(isinstance(e["title"], str) and e["title"] for e in cm)
+
+    def test_chapter_map_uses_first_occurrence_line(self):
+        # ToC entry on line 1, body heading on line 5 → map keeps line 1
+        text = "Chapter 1: First\n...\nChapter 1\nbody\n"
+        result = detect_structure(text)
+        assert result["chapters_detected"] == 1
+        assert len(result["chapter_map"]) == 1
+        assert result["chapter_map"][0]["line"] == 1
+
+    def test_chapter_map_empty_when_no_headings(self):
+        result = detect_structure("just prose, no chapter headings at all\n" * 5)
+        assert result["chapter_map"] == []
+

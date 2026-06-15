@@ -82,9 +82,87 @@ def validate(root: Path) -> int:
     return 0
 
 
+def _collect_link_targets(root: Path) -> dict:
+    """Map each .md file (relative path str) to the set of files that link to it.
+
+    Used by strict-mode orphan / cross-link checks. Keys are relative POSIX
+    paths like 'concepts/free-will.md'; values are sets of referrer paths.
+    """
+    inbound: dict = {}
+    all_md = sorted(p for p in root.rglob("*.md") if not any(
+        part.startswith(".") for part in p.relative_to(root).parts
+    ))
+    # initialize every file with an empty set
+    for p in all_md:
+        inbound[p.relative_to(root).as_posix()] = set()
+
+    for src in all_md:
+        text = src.read_text(encoding="utf-8", errors="ignore")
+        for raw_target in LINK_RE.findall(text):
+            target = raw_target.strip().split("#", 1)[0]
+            if not target or is_external(target):
+                continue
+            target = urllib.parse.unquote(target)
+            dest = (root / target.lstrip("/")) if target.startswith("/") else (src.parent / target)
+            if raw_target.endswith("/") or target.endswith("/"):
+                dest = dest / "index.md"
+            if dest.exists():
+                rel = dest.resolve().relative_to(root.resolve()).as_posix()
+                inbound.setdefault(rel, set()).add(src.relative_to(root).as_posix())
+    return inbound
+
+
+def strict_checks(root: Path) -> list:
+    """Additional quality warnings beyond shape validation.
+
+    These never affect the exit code — they only print guidance, mirroring the
+    skill's Quality Rules (durable concepts, traceability, navigation,
+    uncertainty separation) which the shape validator can't enforce.
+    """
+    warns = []
+    inbound = _collect_link_targets(root)
+
+    # 1. Orphan pages: a content .md nothing else links to.
+    for rel, referrers in sorted(inbound.items()):
+        base = rel.rsplit("/", 1)[-1]
+        if base in RESERVED:
+            continue  # index.md / log.md are reached structurally
+        if not referrers:
+            warns.append(f"[orphan] {rel}: no other page links to it — add a link from the relevant index or concept page")
+
+    # 2. Glossary presence.
+    glossary = root / "glossary" / "terms.md"
+    if not glossary.exists():
+        warns.append("[glossary] glossary/terms.md missing — add key terms for agent lookups")
+    elif glossary.exists():
+        text = glossary.read_text(encoding="utf-8", errors="ignore")
+        # count bold term entries
+        term_count = len(re.findall(r"^- \*\*", text, re.MULTILINE))
+        if term_count == 0:
+            warns.append("[glossary] glossary/terms.md is empty — add key terms")
+
+    # 3. Zero-inbound concept/chapter pages (core-thesis reachability hint).
+    for rel, referrers in sorted(inbound.items()):
+        if rel.startswith(("concepts/", "frameworks/", "claims/")) and not referrers:
+            # already reported as orphan; skip duplicate
+            continue
+    return warns
+
+
 def main() -> int:
-    root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".")
-    return validate(root.resolve())
+    args = sys.argv[1:]
+    strict = "--strict" in args
+    # strip flags to find the root path argument
+    positional = [a for a in args if not a.startswith("--")]
+    root = Path(positional[0]) if positional else Path(".")
+    code = validate(root.resolve())
+    if strict and code == 0:
+        strict_warns = strict_checks(root.resolve())
+        if strict_warns:
+            print("\nOKF wiki strict-mode notes (advisory, do not affect pass/fail):")
+            for w in strict_warns:
+                print(f"- {w}")
+    return code
 
 
 if __name__ == "__main__":
