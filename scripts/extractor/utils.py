@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import glob
+import importlib.util
 import json
 import os
 import re
@@ -48,6 +49,10 @@ from extractor.parsers.epub import (
 
 def estimate_tokens(text: str) -> int:
     return int(len(text.split()) / WORDS_PER_TOKEN)
+
+
+def _module_available(module_name: str) -> bool:
+    return importlib.util.find_spec(module_name) is not None
 
 
 # Explicit chapter heading: "Chapter 5", "Capítulo 5: ...", "Chapter 1. Intro".
@@ -325,11 +330,18 @@ def extract_single_file(input_path: Path, extraction_mode: str, install_mode: st
     
     if ext == ".epub":
         print(f"Extracting EPUB: {input_str}")
+        print(f"Python executable: {sys.executable}")
         text = extract_with_ebooklib(input_str)
         if text and text.strip():
             method = "ebooklib"
         else:
-            print("ebooklib not available")
+            missing = [name for name in ("ebooklib", "bs4") if not _module_available(name)]
+            if missing:
+                print(f"ebooklib parser unavailable in this Python; missing: {', '.join(missing)}")
+                print("Install for the same Python used by this extractor:")
+                print(f"  {sys.executable} -m pip install ebooklib beautifulsoup4")
+            else:
+                print("ebooklib parser is installed, but it returned no text for this EPUB")
             print("Trying stdlib zipfile parser...", end=" ", flush=True)
             text = extract_with_zipfile(input_str)
             if text and text.strip():
@@ -339,8 +351,8 @@ def extract_single_file(input_path: Path, extraction_mode: str, install_mode: st
                 print("FAILED")
                 raise ExtractionError(
                     "Could not extract text from EPUB.\n"
-                    "Install ebooklib + beautifulsoup4 for best results:\n"
-                    "  pip3 install ebooklib beautifulsoup4"
+                    "Install ebooklib + beautifulsoup4 for the same Python used by this extractor:\n"
+                    f"  {sys.executable} -m pip install ebooklib beautifulsoup4"
                 )
         pages = count_epub_chapters(input_str)
         pages_label = "spine_items"

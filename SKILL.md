@@ -71,10 +71,11 @@ Use this skill's extractor. Prefer `python3`.
 For EPUB sources, prefer installing the higher-quality EPUB parser before extraction:
 
 ```bash
-pip3 install ebooklib beautifulsoup4
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+"$PYTHON_BIN" -m pip install ebooklib beautifulsoup4
 ```
 
-`ebooklib` understands EPUB metadata, manifest, spine order, and document items. `beautifulsoup4` cleans XHTML/HTML content more reliably. If they are missing, the extractor falls back to stdlib ZIP/HTML parsing, which is acceptable for simple EPUBs but more likely to lose ordering, miss nested chapters, or include navigation noise.
+Install with the same `PYTHON_BIN` that will run `extract.py`; do not use bare `pip3` unless you have confirmed it points to that same Python. `ebooklib` understands EPUB metadata, manifest, spine order, and document items. `beautifulsoup4` cleans XHTML/HTML content more reliably. If they are missing, the extractor falls back to stdlib ZIP/HTML parsing, which is acceptable for simple EPUBs but more likely to lose ordering, miss nested chapters, or include navigation noise.
 
 ```bash
 SCRIPT_PATH=""
@@ -93,6 +94,15 @@ do
 done
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+"$PYTHON_BIN" - <<'PY'
+import sys
+print(sys.executable)
+try:
+    import ebooklib, bs4
+    print("ebooklib and beautifulsoup4 available")
+except ModuleNotFoundError as exc:
+    print(f"missing: {exc.name}")
+PY
 "$PYTHON_BIN" "$SCRIPT_PATH" $INPUT_PATHS --mode <BOOK_TYPE> --install-missing ask
 ```
 

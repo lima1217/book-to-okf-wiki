@@ -65,7 +65,15 @@ to inspect available extraction backends.
 For EPUB, install the recommended parser stack for better chapter order and cleaner XHTML extraction:
 
 ```bash
-pip3 install ebooklib beautifulsoup4
+python3 -m pip install ebooklib beautifulsoup4
+```
+
+Use the same Python that runs `scripts/extract.py`. If your system has multiple Pythons, prefer:
+
+```bash
+PYTHON_BIN=/path/to/python3
+"$PYTHON_BIN" -m pip install ebooklib beautifulsoup4
+"$PYTHON_BIN" scripts/extract.py --check
 ```
 
 Without those packages, the extractor falls back to Python stdlib ZIP/HTML parsing. That fallback is dependency-free, but it is less EPUB-aware than `ebooklib`.
