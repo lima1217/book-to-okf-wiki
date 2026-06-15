@@ -6,10 +6,7 @@ advisory notes (orphan pages, missing glossary) that must NEVER change the
 exit code.
 """
 import importlib.util
-import sys
 from pathlib import Path
-
-import pytest
 
 # Load the validator module from a file path (it's not on a package).
 _VALIDATOR_PATH = (

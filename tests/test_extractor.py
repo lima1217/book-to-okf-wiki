@@ -522,6 +522,18 @@ class TestParseArguments:
         )
         assert mode == "text"
 
+    def test_workdir_flag_value_is_not_treated_as_input(self, tmp_path):
+        paths, _, _ = parse_arguments(
+            ["extract.py", "book.txt", "--workdir", str(tmp_path / "out")]
+        )
+        assert paths == ["book.txt"]
+
+    def test_workdir_equals_form_is_not_treated_as_input(self, tmp_path):
+        paths, _, _ = parse_arguments(
+            ["extract.py", "book.txt", f"--workdir={tmp_path / 'out'}"]
+        )
+        assert paths == ["book.txt"]
+
 
 class TestEstimateTokens:
     """Tests for token estimation."""
@@ -815,13 +827,32 @@ class TestWorkdirIsolation:
 
         main()
 
-        # The shared legacy dir must NOT contain the file (it went to a subdir)
-        shared = Path(tempfile.gettempdir()) / "book_okf_wiki_work" / "full_text.txt"
-        # find the actual output: scan the per-source subdir we created
+        # Find the actual output: scan the per-source subdir we created.
         base = Path(tempfile.gettempdir()) / "book_okf_wiki_work"
         found = list(base.glob("solo-*/full_text.txt"))
         assert found, "expected a per-source subdir output"
         assert "isolated content" in found[0].read_text(encoding="utf-8")
+
+    def test_main_workdir_flag_writes_to_requested_dir(self, tmp_path, monkeypatch):
+        """--workdir should set output location without becoming an input path."""
+        monkeypatch.delenv("BOOK_SKILL_WORKDIR", raising=False)
+        good = _make_text_file(tmp_path / "flagged.txt", "Chapter 1: Start\nbody")
+        out_dir = tmp_path / "out"
+
+        monkeypatch.setattr(
+            "sys.argv",
+            ["extract.py", str(good), "--install-missing", "no", "--workdir", str(out_dir)],
+        )
+        monkeypatch.setattr("extractor.utils.prepare_dependencies", lambda *a: None)
+
+        main()
+
+        assert (out_dir / "full_text.txt").exists()
+        meta = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
+        assert meta["sources"][0]["filename"] == "flagged.txt"
+        assert meta["sources"][0]["chapter_map"] == [
+            {"n": 1, "title": "Chapter 1: Start", "line": 1}
+        ]
 
 
 class TestEpubSectionMarkers:
@@ -862,4 +893,3 @@ class TestChapterMap:
     def test_chapter_map_empty_when_no_headings(self):
         result = detect_structure("just prose, no chapter headings at all\n" * 5)
         assert result["chapter_map"] == []
-

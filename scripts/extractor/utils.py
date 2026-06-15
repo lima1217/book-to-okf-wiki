@@ -228,6 +228,13 @@ def parse_arguments(argv: list[str]) -> tuple[list[str], str, str]:
                 i += 2
             else:
                 i += 1
+        elif arg == "--workdir":
+            if i + 1 < len(args) and not args[i+1].startswith("--"):
+                i += 2
+            else:
+                i += 1
+        elif arg.startswith("--workdir="):
+            i += 1
         elif arg == "--no-install-missing":
             i += 1
         elif arg.startswith("-"):
@@ -623,7 +630,8 @@ def main():
                 "words": src["words"],
                 "estimated_tokens": src["estimated_tokens"],
                 "chapters_detected": src["chapters_detected"],
-                "has_toc": src["has_toc"]
+                "has_toc": src["has_toc"],
+                "chapter_map": src["chapter_map"],
             }
             for src in extracted_sources
         ],
