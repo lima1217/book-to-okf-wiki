@@ -103,25 +103,66 @@ try:
 except ModuleNotFoundError as exc:
     print(f"missing: {exc.name}")
 PY
-"$PYTHON_BIN" "$SCRIPT_PATH" $INPUT_PATHS --mode <BOOK_TYPE> --install-missing ask [--workdir <path>]
+"$PYTHON_BIN" "$SCRIPT_PATH" $INPUT_PATHS --mode <BOOK_TYPE> --install-missing ask [--workdir <path>] [--pkg <package-dir>]
 ```
 
-This creates (under a work directory — see the isolation note below):
+By default this creates (under a work directory — see the isolation note below):
 
 - `<workdir>/full_text.txt`
 - `<workdir>/metadata.json`
 
 Read `metadata.json` before continuing.
 
-> **Work directory isolation (important).** Each extraction now writes to an
-> **isolated per-source** subdirectory by default
+> **Reusable extraction into the package (`--pkg`) — preferred for wiki
+> generation.** When you know the package directory (the `<package-slug>` from
+> Step 4), pass `--pkg <package-dir>`. The extractor then writes the text
+> **inside the package** at `<package-dir>/sources/`, in a versioned, reusable
+> form:
+>
+> - `sources/full_text-<YYYYMMDD>.txt` — the **pinned** extraction. If a file
+>   for that date already exists, the extractor writes
+>   `sources/full_text-<YYYYMMDD>-2.txt`, then `-3`, and so on instead of
+>   overwriting. Anchor all line-number references (chapter/subsection
+>   boundaries, source-page tables) to the exact dated filename. Old dated files
+>   are NOT deleted on re-extraction, preserving history.
+> - `sources/full_text.txt` — an always-latest copy, so "just read the current
+>   full text" works without knowing the date.
+> - `sources/metadata.json` — overwritten each run, and now carries
+>   `extraction_version` (`full_text_file`), `full_text_md5`, and
+>   `full_text_lines` so any reader can verify which version they hold.
+>
+> This makes the extraction **durable and portable**: commit it to git, zip and
+> share the package, and — crucially — a later session (deep-reading new
+> chapters, updating the wiki) can **reuse the same file** instead of
+> re-extracting. Re-extraction is exactly what makes line numbers drift between
+> runs; pinning the file in `sources/` removes that drift. So when generating a
+> package, **pass `--pkg`**.
+
+**Reuse the pinned extraction on later sessions (deep-read / update).** Before
+re-extracting:
+
+1. Look for `sources/full_text-<date>.txt` / `sources/full_text-<date>-N.txt`
+   (or `sources/full_text.txt`) in the existing package and read
+   `sources/metadata.json`.
+2. Verify it matches what the source pages claim: compare `full_text_md5` /
+   `full_text_lines` in `metadata.json` against the values recorded in
+   `sources/source-<NNN>.md`. If they match, **reuse the file — do NOT
+   re-extract.** Anchor new line references to the dated filename the source
+   page cites.
+3. Only re-extract (still passing `--pkg`) if the file is missing or the
+   checksum does not match — and then re-pin all line-number references to the
+   new dated file, updating the source page's md5/lines/version stamp.
+
+> **Work directory isolation (when NOT using --pkg).** Each extraction writes to
+> an **isolated per-source** subdirectory by default
 > (`<tempdir>/book_okf_wiki_work/<stem>-<hash>/`), so extracting a different
 > book no longer overwrites a previous extraction's files. To pin a fixed
 > directory instead, pass `--workdir <path>` or set `BOOK_SKILL_WORKDIR`.
 > If you set neither, read the actual `<workdir>` path from the extractor's
 > stdout (`Text ->` / `Meta ->` lines) — do **not** assume the legacy
 > `<tempdir>/book_okf_wiki_work/` path, and never assume a prior extraction's
-> files are still there.
+> files are still there. **Prefer `--pkg` for any extraction that feeds a wiki
+> package**, since temp files are not reusable across sessions.
 
 **Chapter boundary markers.** EPUB extraction now injects a marker line
 before each spine item:
@@ -151,7 +192,10 @@ Note: `chapter_map` only captures headings the detector recognizes
 non-standard headings (e.g. titled sections like "Learning", "Other minds")
 will have `chapter_map: []` — fall back to the `EPUB-SECTION` markers.
 
-For large books over ~50k tokens, do not load `full_text.txt` all at once. Use `rg`, `grep`, `sed`, `wc`, and bounded reads to inspect sections.
+For large books over ~50k tokens, do not load the full text all at once. Use
+`rg`, `grep`, `sed`, `wc`, and bounded reads against the pinned file
+(`sources/full_text-<YYYYMMDD>.txt` or `sources/full_text-<YYYYMMDD>-N.txt`
+when `--pkg` was used) to inspect sections.
 
 ## Step 3: Estimate and Confirm
 
@@ -293,6 +337,18 @@ Include:
 - Any extraction quality warnings.
 - Source citation label used throughout the package.
 
+**Pinned-text provenance (when `--pkg` was used).** Record the versioned file
+the extraction produced, plus its fingerprint, so later sessions can verify
+they are reading the same text before reusing it:
+
+- The dated filename: `sources/full_text-<YYYYMMDD>.txt` or
+  `sources/full_text-<YYYYMMDD>-N.txt`.
+- `full_text_md5` and `full_text_lines` (read from `sources/metadata.json`).
+- A one-line note: "深读时先复用此文件（校验 md5/行数），勿重新提取；只有缺失或校验不符才重提取（仍传 `--pkg`）。"
+
+Any line-number table on the source page (chapter/subsection boundaries) must
+state which dated file its line numbers anchor to.
+
 Do not copy long source text into source pages.
 
 ## Step 8: Generate Chapter Notes
@@ -400,6 +456,12 @@ book's load-bearing claims.
    agent reading the concept page will miss its source of truth.
 4. **Glossary**: terms coined or defined in a subsection should be added to
    `glossary/terms.md` with a link back to the subsection.
+5. **Line-number anchoring**: when a subsection note cites a text span (e.g.
+   `full_text.txt 行 9128–9177`), anchor it to the **dated pinned file**
+   (`sources/full_text-<YYYYMMDD>.txt` or `sources/full_text-<YYYYMMDD>-N.txt`)
+   and reference the version/md5/lines recorded on the source page. This keeps
+   line refs stable across sessions — they must not silently refer to "whatever
+   `full_text.txt` happens to be this run", which is what causes drift.
 
 ### Updating indexes
 
@@ -577,14 +639,23 @@ When updating an existing package:
 
 1. Read root `AGENTS.md`, `index.md`, and `log.md`.
 2. Read relevant directory indexes.
-3. Add a new `sources/source-<NNN>.md`.
-4. Create new chapter notes for new source sections.
-5. Merge durable ideas into existing concept/framework pages instead of duplicating them.
-6. Add or revise claims with source references.
-7. Update glossary and open questions.
-8. Update affected `index.md` files.
-9. Append to root `log.md` and affected directory `log.md`.
-10. Run validation.
+3. **Reuse the pinned extraction before re-extracting.** Check
+   `sources/full_text-<date>.txt` / `sources/full_text-<date>-N.txt` (or
+   `sources/full_text.txt`) and `sources/metadata.json`. If the file exists and
+   its `full_text_md5` / `full_text_lines` match what the source page records,
+   **read that file for deep-reading — do not re-extract.** Re-extraction causes
+   line-number drift; only re-extract (still passing `--pkg <package-dir>`) if
+   the file is missing or the checksum does not match, then re-pin line refs to
+   the new dated file.
+4. Add a new `sources/source-<NNN>.md` (only if a genuinely new source is added;
+   deep-reading existing chapters does not need a new source page).
+5. Create new chapter notes for new source sections.
+6. Merge durable ideas into existing concept/framework pages instead of duplicating them.
+7. Add or revise claims with source references.
+8. Update glossary and open questions.
+9. Update affected `index.md` files.
+10. Append to root `log.md` and affected directory `log.md`.
+11. Run validation.
 
 When **deep-reading new chapters** (Step 8b): add a back-link from each
 existing concept page to any new subsection that states a load-bearing claim

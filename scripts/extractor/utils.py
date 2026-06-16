@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import glob
+import hashlib
 import importlib.util
 import json
 import os
@@ -24,6 +25,9 @@ from extractor.config import (
     supported_formats_message,
     per_source_workdir,
     env_workdir_pinned,
+    pkg_sources_dir,
+    today_version,
+    versioned_text_paths,
 )
 from extractor.dependencies import (
     normalize_install_mode,
@@ -234,6 +238,13 @@ def parse_arguments(argv: list[str]) -> tuple[list[str], str, str]:
             else:
                 i += 1
         elif arg.startswith("--workdir="):
+            i += 1
+        elif arg == "--pkg":
+            if i + 1 < len(args) and not args[i+1].startswith("--"):
+                i += 2
+            else:
+                i += 1
+        elif arg.startswith("--pkg="):
             i += 1
         elif arg == "--no-install-missing":
             i += 1
@@ -493,10 +504,23 @@ def print_banner() -> None:
         pass  # best-effort: never block extraction on the banner
 
 
-def resolve_workdir(argv: list[str], input_files: list[Path]) -> tuple[Path, Path, Path]:
-    """Resolve (output_dir, output_text, output_meta) for this run.
+def resolve_workdir(argv: list[str], input_files: list[Path]) -> tuple[Path, Path, Path, Path | None]:
+    """Resolve ``(out_dir, out_text, out_meta, stable_text)`` for this run.
+
+    ``stable_text`` is non-None only in package mode (case 0): it is the path of
+    the always-latest ``sources/full_text.txt`` copy that mirrors the versioned
+    ``out_text``. In every other mode it is ``None`` and callers write only to
+    ``out_text`` — preserving the legacy single-file behavior exactly.
 
     Precedence (highest first):
+      0. ``--pkg <package-dir>`` CLI flag — write a REUSABLE, versioned extraction
+         into ``<package-dir>/sources/`` so later sessions can read/verify it
+         instead of re-extracting (which is what makes line-number references
+         drift). Produces:
+           sources/full_text-<YYYYMMDD>.txt   (pinned; line refs anchor here)
+           sources/full_text.txt               (always-latest copy = stable_text)
+           sources/metadata.json               (overwritten; carries version/md5/lines)
+         Old versioned files are NOT deleted on re-extraction (history preserved).
       1. ``--workdir <path>`` CLI flag.
       2. ``BOOK_SKILL_WORKDIR`` env var (pin-to-one-dir legacy mode).
       3. Otherwise: an isolated per-source subdirectory under the default base,
@@ -507,20 +531,29 @@ def resolve_workdir(argv: list[str], input_files: list[Path]) -> tuple[Path, Pat
     ``--workdir``. Module-level ``OUTPUT_DIR`` is honored only as the env-pin
     target (case 2), keeping the legacy patch surface working.
     """
+    # (0) package mode — highest precedence; decides its own layout under sources/
+    pkg_dir = _read_flag(argv, "--pkg")
+    if pkg_dir:
+        sources_dir = pkg_sources_dir(Path(pkg_dir))
+        version = today_version()
+        versioned_text, stable_text, out_meta = versioned_text_paths(sources_dir, version)
+        # out_dir is the sources dir so main()'s mkdir parents the versioned file.
+        return sources_dir, versioned_text, out_meta, stable_text
+
     # (1) explicit flag
     flag_dir = _read_flag(argv, "--workdir")
     if flag_dir:
         out_dir = Path(flag_dir)
-        return out_dir, out_dir / "full_text.txt", out_dir / "metadata.json"
+        return out_dir, out_dir / "full_text.txt", out_dir / "metadata.json", None
 
     # (2) env pin (also covers tests that do monkeypatch.setenv("BOOK_SKILL_WORKDIR", ...))
     if env_workdir_pinned():
-        return OUTPUT_DIR, OUTPUT_TEXT, OUTPUT_META
+        return OUTPUT_DIR, OUTPUT_TEXT, OUTPUT_META, None
 
     # (3) per-source isolation (new default)
     ident = str(input_files[0]) if input_files else "source"
     out_dir = per_source_workdir(ident)
-    return out_dir, out_dir / "full_text.txt", out_dir / "metadata.json"
+    return out_dir, out_dir / "full_text.txt", out_dir / "metadata.json", None
 
 
 def _read_flag(argv: list[str], name: str) -> str | None:
@@ -535,6 +568,44 @@ def _read_flag(argv: list[str], name: str) -> str | None:
     return None
 
 
+def _chapter_map_with_line_offset(chapter_map: list[dict], line_offset: int) -> list[dict]:
+    """Return a chapter_map adjusted into the written full_text line space."""
+    adjusted = []
+    for entry in chapter_map:
+        copied = dict(entry)
+        if isinstance(copied.get("line"), int):
+            copied["line"] = copied["line"] + line_offset
+        adjusted.append(copied)
+    return adjusted
+
+
+def _source_text_line_offsets(consolidated_text: str, sources: list[dict]) -> list[int]:
+    """Find each source text's starting line inside the written full_text file.
+
+    Per-source extraction detects chapter lines in the raw source text, but the
+    final full_text file prepends a SOURCE separator for each source. Source-page
+    line references need the final written-file coordinates, not raw coordinates.
+    """
+    offsets: list[int] = []
+    search_pos = 0
+    for src in sources:
+        marker = f"SOURCE: {src['filename']} (Path: {src['source_file']})"
+        marker_index = consolidated_text.find(marker, search_pos)
+        if marker_index == -1:
+            offsets.append(0)
+            continue
+        source_text = src["text"].strip()
+        text_index = consolidated_text.find(source_text, marker_index + len(marker))
+        if text_index == -1:
+            offsets.append(0)
+            search_pos = marker_index + len(marker)
+            continue
+        text_start_line = consolidated_text[:text_index].count("\n") + 1
+        offsets.append(text_start_line - 1)
+        search_pos = text_index + len(source_text)
+    return offsets
+
+
 def main():
     print_banner()
 
@@ -542,26 +613,28 @@ def main():
         sys.exit(run_dependency_check())
 
     if len(sys.argv) < 2:
-        print("Usage: extract.py <path-to-document-folder-or-glob>... [--mode technical|text] [--install-missing ask|yes|no] [--workdir <path>]", file=sys.stderr)
+        print("Usage: extract.py <path-to-document-folder-or-glob>... [--mode technical|text] [--install-missing ask|yes|no] [--workdir <path>] [--pkg <package-dir>]", file=sys.stderr)
         print("       extract.py --check    # report which extractors are installed", file=sys.stderr)
+        print("       --pkg <package-dir>   # write a reusable, versioned extraction into <package-dir>/sources/", file=sys.stderr)
         print(f"Supported formats: {supported_formats_message()}", file=sys.stderr)
         sys.exit(1)
-        
+
     raw_input_paths, extraction_mode, install_mode = parse_arguments(sys.argv)
-    
+
     if not raw_input_paths:
         print("ERROR: No input document, folder, or glob pattern specified.", file=sys.stderr)
         sys.exit(1)
-        
+
     input_files = resolve_input_files(raw_input_paths)
-    
+
     if not input_files:
         print(f"ERROR: No supported files found matching: {', '.join(raw_input_paths)}", file=sys.stderr)
         sys.exit(1)
 
-    # Resolve an isolated work directory for this run (see resolve_workdir).
-    # Falls back to the legacy shared dir when BOOK_SKILL_WORKDIR is set.
-    out_dir, out_text, out_meta = resolve_workdir(sys.argv, input_files)
+    # Resolve the output location for this run (see resolve_workdir).
+    # `stable_text` is non-None only in --pkg mode (a reusable copy of the
+    # versioned extraction written to <pkg>/sources/full_text.txt).
+    out_dir, out_text, out_meta, stable_text = resolve_workdir(sys.argv, input_files)
     out_dir.mkdir(parents=True, exist_ok=True)
     
     extracted_sources = []
@@ -589,20 +662,39 @@ def main():
         
     # Combine texts
     consolidated_text = "".join(combined_texts).strip()
-    
+
     # Write combined text
     out_text.write_text(consolidated_text, encoding="utf-8")
-    
+
+    # Package mode: also mirror the versioned file to the always-latest stable
+    # name (sources/full_text.txt) so "just read the current full text" works
+    # without knowing the version stamp. A copy (not a symlink) for identical
+    # behavior across macOS/Linux/Windows.
+    if stable_text is not None:
+        shutil.copyfile(out_text, stable_text)
+
     # Consolidate metadata
     total_file_size_mb = sum(src["file_size_mb"] for src in extracted_sources)
     total_pages = sum(src["pages"] for src in extracted_sources)
     total_chars = len(consolidated_text)
     total_words = len(consolidated_text.split())
     total_tokens = estimate_tokens(consolidated_text)
-    
+
     # Detect structure on consolidated text
     consolidated_structure = detect_structure(consolidated_text)
-    
+    source_line_offsets = _source_text_line_offsets(consolidated_text, extracted_sources)
+
+    # Provenance for the written full_text file. Always computed (cheap, useful
+    # even in temp-workdir mode); `written_into_package` records whether a reusable
+    # copy now lives under sources/. `full_text_lines` uses the same 1-based
+    # convention as the line numbers quoted in source pages / subsection notes.
+    full_text_bytes = out_text.read_bytes()
+    full_text_md5 = hashlib.md5(full_text_bytes).hexdigest()
+    full_text_lines = consolidated_text.count("\n") + (
+        0 if (not consolidated_text or consolidated_text.endswith("\n")) else 1
+    )
+    written_into_package = stable_text is not None
+
     metadata = {
         "source_file": "Consolidated from multiple sources" if len(extracted_sources) > 1 else extracted_sources[0]["source_file"],
         "filename": "multi-source" if len(extracted_sources) > 1 else extracted_sources[0]["filename"],
@@ -617,6 +709,11 @@ def main():
         "estimated_tokens_human": f"~{total_tokens // 1000}K",
         "output_text": str(out_text),
         "total_sources": len(extracted_sources),
+        # Reuse / versioning provenance for the full_text file.
+        "written_into_package": written_into_package,
+        "full_text_file": out_text.name,
+        "full_text_md5": full_text_md5,
+        "full_text_lines": full_text_lines,
         "sources": [
             {
                 "source_file": src["source_file"],
@@ -631,13 +728,15 @@ def main():
                 "estimated_tokens": src["estimated_tokens"],
                 "chapters_detected": src["chapters_detected"],
                 "has_toc": src["has_toc"],
-                "chapter_map": src["chapter_map"],
+                "chapter_map": _chapter_map_with_line_offset(
+                    src["chapter_map"], source_line_offsets[index]
+                ),
             }
-            for src in extracted_sources
+            for index, src in enumerate(extracted_sources)
         ],
         **consolidated_structure,
     }
-    
+
     out_meta.write_text(json.dumps(metadata, indent=2, ensure_ascii=False))
     
     page_line = f"   Total Pages: {total_pages}"
@@ -656,6 +755,14 @@ def main():
         )
     print(f"\n   Text -> {out_text}")
     print(f"   Meta -> {out_meta}")
+    if stable_text is not None:
+        print(f"   Stable -> {stable_text}")
+        print(
+            f"   Pkg    : reusable extraction pinned in sources/. "
+            f"version={metadata['full_text_file']} md5={full_text_md5} lines={full_text_lines}. "
+            f"On later sessions, REUSE this file (verify via md5/lines in metadata.json); "
+            f"only re-extract if it is missing or the checksum does not match."
+        )
     if errors:
         print(f"\n   WARNING: {len(errors)} source(s) skipped due to errors:")
         for path, err in errors:

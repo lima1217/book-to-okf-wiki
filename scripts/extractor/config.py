@@ -1,6 +1,7 @@
 import hashlib
 import os
 import tempfile
+from datetime import date
 from pathlib import Path
 
 # Default base work directory. Two ways to override:
@@ -39,6 +40,56 @@ def per_source_workdir(source_identifier: str) -> Path:
 def env_workdir_pinned() -> bool:
     """True when BOOK_SKILL_WORKDIR is explicitly set (pin-to-one-dir mode)."""
     return bool(os.environ.get("BOOK_SKILL_WORKDIR"))
+
+
+def pkg_sources_dir(pkg_dir: Path) -> Path:
+    """Return the ``sources/`` directory inside an OKF wiki package.
+
+    Does NOT create it — callers (main) mkdir on demand. Centralized here so the
+    package-extraction layout is defined in one place.
+    """
+    return Path(pkg_dir) / "sources"
+
+
+def today_version() -> str:
+    """Return a YYYYMMDD version stamp for the current date."""
+    return date.today().strftime("%Y%m%d")
+
+
+def versioned_text_paths(sources_dir: Path, version: str) -> tuple[Path, Path, Path]:
+    """Resolve package-extraction output paths for a given version stamp.
+
+    Returns ``(versioned_text, stable_text, meta)``:
+
+    - ``versioned_text``: ``sources/full_text-<version>.txt`` (or
+      ``...-2.txt`` / ``...-3.txt`` if that day's file already exists) — the
+      pinned, line-number-anchored extraction for this run. Deep-read line refs
+      and source-page provenance point here. Old versioned files are NOT
+      overwritten or deleted by re-extraction (callers/users prune manually),
+      preserving history.
+    - ``stable_text``: ``sources/full_text.txt`` — always the latest extraction's
+      copy, so "just read the current full text" keeps working without knowing
+      the version. (A copy, not a symlink, so it behaves identically across
+      macOS/Linux/Windows and needs no special permissions.)
+    - ``meta``: ``sources/metadata.json`` — overwritten each run with the latest
+      metadata, which itself carries ``extraction_version`` / ``full_text_md5`` /
+      ``full_text_lines`` so any reader can tell which versioned file it describes.
+    """
+    sources_dir = Path(sources_dir)
+    versioned_text = sources_dir / f"full_text-{version}.txt"
+    if versioned_text.exists():
+        counter = 2
+        while True:
+            candidate = sources_dir / f"full_text-{version}-{counter}.txt"
+            if not candidate.exists():
+                versioned_text = candidate
+                break
+            counter += 1
+    return (
+        versioned_text,
+        sources_dir / "full_text.txt",
+        sources_dir / "metadata.json",
+    )
 
 WORDS_PER_TOKEN = 0.75  # approximate
 

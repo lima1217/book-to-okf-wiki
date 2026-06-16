@@ -794,13 +794,15 @@ class TestWorkdirIsolation:
     def test_resolve_workdir_flag_overrides_default(self, tmp_path):
         from extractor.utils import resolve_workdir
         flag_dir = tmp_path / "flagged"
-        out_dir, out_text, out_meta = resolve_workdir(
+        out_dir, out_text, out_meta, stable_text = resolve_workdir(
             ["extract.py", str(tmp_path / "a.epub"), "--workdir", str(flag_dir)],
             [tmp_path / "a.epub"],
         )
         assert out_dir == flag_dir
         assert out_text == flag_dir / "full_text.txt"
         assert out_meta == flag_dir / "metadata.json"
+        # --workdir is not package mode, so no stable-text mirror is produced.
+        assert stable_text is None
 
     def test_resolve_workdir_default_isolates_per_source(self, tmp_path, monkeypatch):
         """Without env/flag, two different sources map to different dirs."""
@@ -810,9 +812,10 @@ class TestWorkdirIsolation:
         b = tmp_path / "beta.epub"
         a.write_text("x")
         b.write_text("y")
-        dir_a, _, _ = resolve_workdir(["extract.py", str(a)], [a])
-        dir_b, _, _ = resolve_workdir(["extract.py", str(b)], [b])
+        dir_a, _, _, stable_a = resolve_workdir(["extract.py", str(a)], [a])
+        dir_b, _, _, stable_b = resolve_workdir(["extract.py", str(b)], [b])
         assert dir_a != dir_b, "different sources must get different work dirs"
+        assert stable_a is None and stable_b is None
 
     def test_main_writes_to_isolated_dir_without_env(self, tmp_path, monkeypatch):
         """main() with no BOOK_SKILL_WORKDIR writes to a per-source subdir, not the shared root."""
@@ -851,8 +854,146 @@ class TestWorkdirIsolation:
         meta = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
         assert meta["sources"][0]["filename"] == "flagged.txt"
         assert meta["sources"][0]["chapter_map"] == [
-            {"n": 1, "title": "Chapter 1: Start", "line": 1}
+            {"n": 1, "title": "Chapter 1: Start", "line": 5}
         ]
+
+
+class TestPackageExtraction:
+    """The --pkg flag pins a reusable, versioned extraction into <pkg>/sources/."""
+
+    def test_resolve_workdir_pkg_writes_into_sources(self, tmp_path):
+        from extractor.utils import resolve_workdir
+        from extractor.config import today_version
+        pkg = tmp_path / "mypkg"
+        out_dir, out_text, out_meta, stable_text = resolve_workdir(
+            ["extract.py", str(tmp_path / "a.txt"), "--pkg", str(pkg)],
+            [tmp_path / "a.txt"],
+        )
+        version = today_version()
+        assert out_dir == pkg / "sources"
+        assert out_text == pkg / "sources" / f"full_text-{version}.txt"
+        assert out_meta == pkg / "sources" / "metadata.json"
+        assert stable_text == pkg / "sources" / "full_text.txt"
+
+    def test_resolve_workdir_pkg_does_not_overwrite_existing_pinned_file(self, tmp_path):
+        from extractor.utils import resolve_workdir
+        from extractor.config import today_version
+        pkg = tmp_path / "mypkg"
+        sources = pkg / "sources"
+        sources.mkdir(parents=True)
+        version = today_version()
+        first = sources / f"full_text-{version}.txt"
+        first.write_text("existing extraction", encoding="utf-8")
+
+        _out_dir, out_text, _out_meta, _stable_text = resolve_workdir(
+            ["extract.py", str(tmp_path / "a.txt"), "--pkg", str(pkg)],
+            [tmp_path / "a.txt"],
+        )
+
+        assert out_text == sources / f"full_text-{version}-2.txt"
+        assert first.read_text(encoding="utf-8") == "existing extraction"
+
+    def test_resolve_workdir_pkg_overrides_workdir_flag(self, tmp_path):
+        """--pkg decides its own layout under sources/; --workdir must not win."""
+        from extractor.utils import resolve_workdir
+        pkg = tmp_path / "mypkg"
+        workdir = tmp_path / "workdir"
+        out_dir, _, _, stable_text = resolve_workdir(
+            ["extract.py", str(tmp_path / "a.txt"),
+             "--pkg", str(pkg), "--workdir", str(workdir)],
+            [tmp_path / "a.txt"],
+        )
+        assert out_dir == pkg / "sources", "--pkg must outrank --workdir"
+        assert stable_text == pkg / "sources" / "full_text.txt"
+
+    def test_parse_arguments_ignores_pkg_flag_as_input(self, tmp_path):
+        from extractor.utils import parse_arguments
+        good = _make_text_file(tmp_path / "book.txt", "hello")
+        inputs, _mode, _install = parse_arguments(
+            ["extract.py", str(good), "--pkg", str(tmp_path / "pkg")]
+        )
+        assert inputs == [str(good)], "--pkg value must not be treated as an input path"
+
+    def test_main_pkg_writes_versioned_and_stable_and_provenance(self, tmp_path, monkeypatch):
+        """main() with --pkg writes versioned + stable text and full provenance."""
+        import hashlib
+        from datetime import date
+        monkeypatch.delenv("BOOK_SKILL_WORKDIR", raising=False)
+        good = _make_text_file(tmp_path / "solo.txt", "line one\nline two\n")
+        pkg = tmp_path / "mypkg"
+
+        monkeypatch.setattr(
+            "sys.argv",
+            ["extract.py", str(good), "--install-missing", "no", "--pkg", str(pkg)],
+        )
+        monkeypatch.setattr("extractor.utils.prepare_dependencies", lambda *a: None)
+
+        main()
+
+        sources = pkg / "sources"
+        version = date.today().strftime("%Y%m%d")
+        versioned = sources / f"full_text-{version}.txt"
+        stable = sources / "full_text.txt"
+        meta_path = sources / "metadata.json"
+
+        assert versioned.exists(), "versioned extraction file must be written"
+        assert stable.exists(), "always-latest stable copy must be written"
+        # stable copy mirrors the versioned file byte-for-byte
+        assert versioned.read_bytes() == stable.read_bytes()
+
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        assert meta["written_into_package"] is True
+        assert meta["full_text_file"] == f"full_text-{version}.txt"
+        assert meta["full_text_md5"] == hashlib.md5(versioned.read_bytes()).hexdigest()
+        # full_text_lines counts the lines actually in the written file (the
+        # SOURCE separator header + the 2 body lines), matching the 1-based
+        # line numbers that source pages / subsection notes anchor to.
+        assert meta["full_text_lines"] == len(versioned.read_text(encoding="utf-8").splitlines())
+        assert meta["sources"][0]["chapter_map"] == []
+
+    def test_main_pkg_source_chapter_map_uses_written_full_text_lines(self, tmp_path, monkeypatch):
+        """Source chapter_map lines should anchor to the written full_text file."""
+        monkeypatch.delenv("BOOK_SKILL_WORKDIR", raising=False)
+        good = _make_text_file(tmp_path / "chaptered.txt", "Chapter 1: Start\nbody\n")
+        pkg = tmp_path / "mypkg"
+
+        monkeypatch.setattr(
+            "sys.argv",
+            ["extract.py", str(good), "--install-missing", "no", "--pkg", str(pkg)],
+        )
+        monkeypatch.setattr("extractor.utils.prepare_dependencies", lambda *a: None)
+
+        main()
+
+        meta = json.loads((pkg / "sources" / "metadata.json").read_text(encoding="utf-8"))
+        full_text_lines = (pkg / "sources" / "full_text.txt").read_text(encoding="utf-8").splitlines()
+        actual_heading_lines = [
+            line_no for line_no, line in enumerate(full_text_lines, start=1)
+            if line == "Chapter 1: Start"
+        ]
+        assert actual_heading_lines == [5]
+        assert meta["sources"][0]["chapter_map"] == [
+            {"n": 1, "title": "Chapter 1: Start", "line": 5}
+        ]
+
+    def test_main_without_pkg_has_no_provenance_package_fields_unset(self, tmp_path, monkeypatch):
+        """Without --pkg, written_into_package is False and no sources/ tree appears."""
+        monkeypatch.delenv("BOOK_SKILL_WORKDIR", raising=False)
+        good = _make_text_file(tmp_path / "solo.txt", "just one line\n")
+        out_dir = tmp_path / "out"
+
+        monkeypatch.setattr(
+            "sys.argv",
+            ["extract.py", str(good), "--install-missing", "no", "--workdir", str(out_dir)],
+        )
+        monkeypatch.setattr("extractor.utils.prepare_dependencies", lambda *a: None)
+
+        main()
+
+        assert not (out_dir / "sources").exists()
+        meta = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
+        assert meta["written_into_package"] is False
+        assert "full_text_md5" in meta  # provenance is still computed (cheap, useful)
 
 
 class TestEpubSectionMarkers:
