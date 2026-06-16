@@ -3,6 +3,10 @@
 Convert books and document collections into OKF-compatible LLM Wiki packages.
 The output is a portable Markdown folder, not an installable agent skill.
 
+## Inspiration
+
+This project was inspired by [virgiliojr94/book-to-skill](https://github.com/virgiliojr94/book-to-skill).
+
 ## Usage
 
 ```text
