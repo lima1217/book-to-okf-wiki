@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Something went wrong during extraction or skill generation
+about: Something went wrong during extraction or wiki generation
 title: "[bug] "
 labels: bug
 ---

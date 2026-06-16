@@ -1,59 +1,42 @@
 ---
 name: book-to-okf-wiki
-description: "Convert books and documents (PDF, EPUB, DOCX, HTML, Markdown, plain text, RTF, MOBI/AZW with Calibre) into self-contained OKF-compatible LLM Wiki knowledge packages, not agent skills. Use when the user wants to turn a book, paper, report, or document folder into a portable Markdown knowledge bundle with index.md, log.md, AGENTS.md, concepts, chapter notes, claims, glossary, citations, and validation so any agent or human can read it as context."
+description: "Convert books and documents (PDF, EPUB, DOCX, HTML, Markdown, plain text, RTF, MOBI/AZW with Calibre) into self-contained OKF-compatible LLM Wiki knowledge packages, not agent skills. Use when the user wants a portable Markdown knowledge bundle with index.md, log.md, AGENTS.md, sources, chapters, concepts, frameworks, claims, glossary, questions, citations, and validation."
 ---
 
-# Book-to-OKF-Wiki Converter
+# Book to OKF Wiki
 
-Transform a book or document set into a self-contained OKF-compatible LLM Wiki package.
+Turn source documents into a self-contained Markdown knowledge package. The
+output is not an agent skill; it is a portable OKF-compatible LLM Wiki that a
+human can browse and any agent can use as context.
 
-The output is **not** a Codex/Claude/Copilot skill. It is a portable Markdown knowledge bundle that the user can read directly, put in git, zip and share, or attach as context to any agent.
-
-## Output Philosophy
-
-Prefer a knowledge package over a skill when the user wants:
-
-- A durable reading artifact they can browse.
-- A source-backed wiki that grows over time.
-- A context pack any agent can consume without installing a skill.
-- A self-contained directory with navigation, logs, citations, and concept links.
-
-Use LLM Wiki as the workflow: ingest sources, distill concepts, maintain cross-links, preserve learning over time.
-
-Use OKF as the shape: Markdown file tree, `index.md`, `log.md`, YAML frontmatter with non-empty `type`, stable links, citations, and validation.
+Use Chinese content when the user writes in Chinese or asks for Chinese.
 
 ## Modes
 
-### Full Conversion
+- **Full conversion**: default when the user provides document paths.
+- **Analyze only**: when the user asks to preview/analyze/extract before writing.
+- **Update existing wiki**: when the user points to an existing package.
 
-Default when the user provides document paths. Extract text, estimate cost, analyze structure, then generate the full OKF wiki package.
+## Inputs
 
-### Analyze Only
+Accept files, directories, or globs for:
 
-Use when the user asks to preview, analyze, or extract before generating. Produce a report of structure, concepts, claims, and suggested package layout. Do not write the package.
+`.pdf`, `.epub`, `.docx`, `.txt`, `.md`, `.markdown`, `.rst`, `.adoc`, `.html`,
+`.htm`, `.rtf`, `.mobi`, `.azw`, `.azw3`.
 
-### Update Existing Wiki
+If the final argument is not an existing path and looks like a slug, use it as
+`PACKAGE_SLUG`; otherwise derive the slug from the title.
 
-Use when the user points to an existing OKF/LLM Wiki package. Extract the new source, then fold it into existing concepts, chapter notes, citations, indexes, and logs.
-
-## Step 0: Parse Inputs
-
-Accept one or more files, directories, or glob patterns. Supported inputs:
-
-`.pdf`, `.epub`, `.docx`, `.txt`, `.md`, `.markdown`, `.rst`, `.adoc`, `.html`, `.htm`, `.rtf`, `.mobi`, `.azw`, `.azw3`.
-
-If the final argument is not an existing path and looks like a slug, treat it as `PACKAGE_SLUG`. Otherwise derive the slug from the title.
-
-If no valid input is provided, stop with:
+No valid input:
 
 ```text
-book-to-okf-wiki now creates OKF LLM Wiki packages. Provide a supported document path, folder, or glob.
+book-to-okf-wiki creates OKF LLM Wiki packages. Provide a supported document path, folder, or glob.
 Usage: book-to-okf-wiki <path-or-glob>... [package-slug]
 ```
 
-## Step 1: Ask Content Type
+## Ask Once
 
-Ask once before extraction:
+Before extraction, ask:
 
 ```text
 这些资料属于哪类？
@@ -62,158 +45,66 @@ Ask once before extraction:
 3. Not sure：先用通用方式，必要时提醒我
 ```
 
-Map to `BOOK_TYPE=technical` for option 1, otherwise `BOOK_TYPE=text`.
+Map option 1 to `BOOK_TYPE=technical`; otherwise use `BOOK_TYPE=text`.
 
-## Step 2: Extract Source Text
+## Extract
 
-Use this skill's extractor. Prefer `python3`.
-
-For EPUB sources, prefer installing the higher-quality EPUB parser before extraction:
+Use this skill's extractor with `python3`. For EPUB, install the better parser
+stack only if useful:
 
 ```bash
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 "$PYTHON_BIN" -m pip install ebooklib beautifulsoup4
 ```
 
-Install with the same `PYTHON_BIN` that will run `extract.py`; do not use bare `pip3` unless you have confirmed it points to that same Python. `ebooklib` understands EPUB metadata, manifest, spine order, and document items. `beautifulsoup4` cleans XHTML/HTML content more reliably. If they are missing, the extractor falls back to stdlib ZIP/HTML parsing, which is acceptable for simple EPUBs but more likely to lose ordering, miss nested chapters, or include navigation noise.
+Run extraction:
 
 ```bash
-SCRIPT_PATH=""
-for candidate in \
-  "$HOME/.agents/skills/book-to-okf-wiki/scripts/extract.py" \
-  "$HOME/.copilot/skills/book-to-okf-wiki/scripts/extract.py" \
-  "$HOME/.claude/skills/book-to-okf-wiki/scripts/extract.py" \
-  ".agents/skills/book-to-okf-wiki/scripts/extract.py" \
-  ".github/skills/book-to-okf-wiki/scripts/extract.py" \
-  ".claude/skills/book-to-okf-wiki/scripts/extract.py"
-do
-  if [ -f "$candidate" ]; then
-    SCRIPT_PATH="$candidate"
-    break
-  fi
-done
-
+SCRIPT="$HOME/.agents/skills/book-to-okf-wiki/scripts/extract.py"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
-"$PYTHON_BIN" - <<'PY'
-import sys
-print(sys.executable)
-try:
-    import ebooklib, bs4
-    print("ebooklib and beautifulsoup4 available")
-except ModuleNotFoundError as exc:
-    print(f"missing: {exc.name}")
-PY
-"$PYTHON_BIN" "$SCRIPT_PATH" $INPUT_PATHS --mode <BOOK_TYPE> --install-missing ask [--workdir <path>] [--pkg <package-dir>]
+"$PYTHON_BIN" "$SCRIPT" $INPUT_PATHS --mode <BOOK_TYPE> --install-missing ask --pkg <package-dir>
 ```
 
-By default this creates (under a work directory — see the isolation note below):
+If this skill is installed somewhere else, find `scripts/extract.py` with `rg
+--files` or `find` and use that path.
 
-- `<workdir>/full_text.txt`
-- `<workdir>/metadata.json`
+Always prefer `--pkg <package-dir>` when generating or updating a wiki. It
+writes reusable pinned source text inside the package:
 
-Read `metadata.json` before continuing.
+- `sources/full_text-<YYYYMMDD>.txt` or `sources/full_text-<YYYYMMDD>-N.txt`
+- `sources/full_text.txt`
+- `sources/metadata.json`
 
-> **Reusable extraction into the package (`--pkg`) — preferred for wiki
-> generation.** When you know the package directory (the `<package-slug>` from
-> Step 4), pass `--pkg <package-dir>`. The extractor then writes the text
-> **inside the package** at `<package-dir>/sources/`, in a versioned, reusable
-> form:
->
-> - `sources/full_text-<YYYYMMDD>.txt` — the **pinned** extraction. If a file
->   for that date already exists, the extractor writes
->   `sources/full_text-<YYYYMMDD>-2.txt`, then `-3`, and so on instead of
->   overwriting. Anchor all line-number references (chapter/subsection
->   boundaries, source-page tables) to the exact dated filename. Old dated files
->   are NOT deleted on re-extraction, preserving history.
-> - `sources/full_text.txt` — an always-latest copy, so "just read the current
->   full text" works without knowing the date.
-> - `sources/metadata.json` — overwritten each run, and now carries
->   `extraction_version` (`full_text_file`), `full_text_md5`, and
->   `full_text_lines` so any reader can verify which version they hold.
->
-> This makes the extraction **durable and portable**: commit it to git, zip and
-> share the package, and — crucially — a later session (deep-reading new
-> chapters, updating the wiki) can **reuse the same file** instead of
-> re-extracting. Re-extraction is exactly what makes line numbers drift between
-> runs; pinning the file in `sources/` removes that drift. So when generating a
-> package, **pass `--pkg`**.
+Read `sources/metadata.json` before writing notes. Anchor line references to
+the dated file, not to the moving `full_text.txt`.
 
-**Reuse the pinned extraction on later sessions (deep-read / update).** Before
-re-extracting:
+For large books, do not load the whole text. Use `rg`, `grep`, `sed`, and `wc`
+against the pinned file. EPUB extraction may include:
 
-1. Look for `sources/full_text-<date>.txt` / `sources/full_text-<date>-N.txt`
-   (or `sources/full_text.txt`) in the existing package and read
-   `sources/metadata.json`.
-2. Verify it matches what the source pages claim: compare `full_text_md5` /
-   `full_text_lines` in `metadata.json` against the values recorded in
-   `sources/source-<NNN>.md`. If they match, **reuse the file — do NOT
-   re-extract.** Anchor new line references to the dated filename the source
-   page cites.
-3. Only re-extract (still passing `--pkg`) if the file is missing or the
-   checksum does not match — and then re-pin all line-number references to the
-   new dated file, updating the source page's md5/lines/version stamp.
+- `=== EPUB-SECTION <n>: <href> ===` markers
+- `chapter_map` in metadata
 
-> **Work directory isolation (when NOT using --pkg).** Each extraction writes to
-> an **isolated per-source** subdirectory by default
-> (`<tempdir>/book_okf_wiki_work/<stem>-<hash>/`), so extracting a different
-> book no longer overwrites a previous extraction's files. To pin a fixed
-> directory instead, pass `--workdir <path>` or set `BOOK_SKILL_WORKDIR`.
-> If you set neither, read the actual `<workdir>` path from the extractor's
-> stdout (`Text ->` / `Meta ->` lines) — do **not** assume the legacy
-> `<tempdir>/book_okf_wiki_work/` path, and never assume a prior extraction's
-> files are still there. **Prefer `--pkg` for any extraction that feeds a wiki
-> package**, since temp files are not reusable across sessions.
+Use those before guessing chapter boundaries.
 
-**Chapter boundary markers.** EPUB extraction now injects a marker line
-before each spine item:
+If not using `--pkg`, read the workdir from extractor stdout (`Text ->`,
+`Meta ->`). Do not assume a fixed temp path.
 
-```text
-=== EPUB-SECTION <n>: <href> ===
-```
+## Confirm Before Writing
 
-Use `grep -n "EPUB-SECTION" full_text.txt` to locate chapter/section spans
-quickly, instead of guessing line numbers or re-scanning headings.
+Before creating a new package, show:
 
-**Chapter map in metadata.** `metadata.json` now includes a `chapter_map`
-array under each source and in the consolidated structure:
+- detected sources
+- approximate pages, words, tokens
+- output directory and package slug
+- generated directories/files
+- estimated time and token cost
 
-```json
-"chapter_map": [
-  {"n": 1, "title": "Chapter 1: Origins", "line": 1072},
-  ...
-]
-```
+Ask for confirmation. If the user says "analyze only", stop after the analysis
+report.
 
-`line` is the 1-based line in `full_text.txt` of the heading's first
-occurrence (usually the ToC entry). Use it to plan chapter notes and to
-`sed -n '<line>,<next_line>p'` a single chapter's span when deep-reading.
-Note: `chapter_map` only captures headings the detector recognizes
-(`Chapter N` / `第N章` / Roman numerals with titles). Books with
-non-standard headings (e.g. titled sections like "Learning", "Other minds")
-will have `chapter_map: []` — fall back to the `EPUB-SECTION` markers.
+## Package Shape
 
-For large books over ~50k tokens, do not load the full text all at once. Use
-`rg`, `grep`, `sed`, `wc`, and bounded reads against the pinned file
-(`sources/full_text-<YYYYMMDD>.txt` or `sources/full_text-<YYYYMMDD>-N.txt`
-when `--pkg` was used) to inspect sections.
-
-## Step 3: Estimate and Confirm
-
-Before generating a package, present:
-
-- Sources detected.
-- Approximate pages, words, and tokens.
-- Proposed package slug and output directory.
-- Files/directories that will be generated.
-- Estimated time and token cost.
-
-Ask for confirmation. If the user says “analyze only”, switch to Analyze Only.
-
-## Step 4: Choose Output Location
-
-Default to the current working directory unless the user gave an explicit output path.
-
-Create:
+Create this tree:
 
 ```text
 <package-slug>/
@@ -229,459 +120,121 @@ Create:
 │   ├── log.md
 │   └── ch01-<slug>.md
 ├── concepts/
-│   ├── index.md
-│   ├── log.md
-│   └── <concept>.md
-├── claims/
-│   ├── index.md
-│   ├── log.md
-│   └── <claim>.md
 ├── frameworks/
-│   ├── index.md
-│   ├── log.md
-│   └── <framework>.md
+├── claims/
 ├── glossary/
-│   ├── index.md
-│   ├── log.md
 │   └── terms.md
 ├── questions/
-│   ├── index.md
-│   ├── log.md
 │   └── open-questions.md
 └── tools/
     └── validate_okf_wiki.py
 ```
 
-Use English directory names for portability and stable agent access. Use Chinese content when the user is Chinese or asks in Chinese.
-
-## Step 5: OKF Frontmatter
-
-Every non-reserved Markdown file must start with YAML frontmatter and non-empty `type`.
+Every directory with Markdown content needs `index.md`; meaningful directories
+also get `log.md`.
 
 Reserved files: `index.md`, `log.md`.
 
-Recommended frontmatter:
+Every other Markdown file starts with YAML frontmatter and a non-empty `type`:
 
 ```yaml
 ---
 type: Concept
-title: Example Concept
+title: Example
 description: One-sentence summary.
 source_refs: [source-001]
 chapter_refs: [ch03]
-tags: [core, book-title]
+tags: [core]
 status: active
 timestamp: 2026-06-15T00:00:00Z
 ---
 ```
 
-Common `type` values:
+Useful `type` values: `AgentGuide`, `Source`, `ChapterNote`, `Concept`,
+`Framework`, `Claim`, `Glossary`, `OpenQuestions`.
 
-- `AgentGuide`
-- `Source`
-- `ChapterNote`
-- `Concept`
-- `Framework`
-- `Claim`
-- `Glossary`
-- `OpenQuestions`
+## What To Write
 
-Unknown fields are allowed. Do not reject useful metadata.
+- `AGENTS.md`: how agents should read, cite, update logs, and treat uncertainty.
+- root `index.md`: title, author, sources, scope, human reading path, agent
+  context path, directory links, top concepts/frameworks.
+- `sources/source-<NNN>.md`: original path, format, extraction method, metadata,
+  warnings, source citation label, pinned text filename, md5, line count.
+- `chapters/ch<NN>-<slug>.md`: core idea, key concepts, frameworks, claims,
+  examples, caveats, links, citations.
+- `concepts/<concept>.md`: synthesized durable concepts across chapters.
+- `frameworks/<framework>.md`: named methods, models, taxonomies, checklists, or
+  decision rules.
+- `claims/<claim>.md`: important factual or argumentative claims with support,
+  assumptions, confidence, related concepts, citations.
+- `glossary/terms.md`: terms, short definitions, links.
+- `questions/open-questions.md`: ambiguities, application questions,
+  contradictions, items needing external validation.
 
-## Step 6: Generate Core Files
+Prefer concept/framework/claim pages over chapter recaps. Preserve essential
+technical snippets, commands, tables, API names, and exact framework names.
+Avoid long verbatim excerpts.
 
-### `AGENTS.md`
+## Deep Read
 
-Explain how any agent should use and maintain the package:
-
-- Read root `index.md` first.
-- Use directory `index.md` files for navigation.
-- Prefer concept/framework/claim pages over raw chapter notes when answering.
-- Cite `source_refs`, `chapter_refs`, and citation sections.
-- Update `log.md` after meaningful changes.
-- Do not treat uncertain notes or open questions as established claims.
-
-### Root `index.md`
-
-Include:
-
-- Book title, author, source list, generated date.
-- One-paragraph scope.
-- Reading path for humans.
-- Context path for agents.
-- Links to all directories.
-- Top 10 concepts/frameworks.
-
-### Root `log.md`
-
-Record creation and every later update:
-
-```md
-# Log
-
-## 2026-06-15
-
-* Initialized package from <sources>.
-```
-
-## Step 7: Generate Source Pages
-
-Create one `sources/source-<NNN>.md` per input source.
-
-Include:
-
-- Original filename/path.
-- Format.
-- Extraction method if known.
-- Pages/words/tokens from metadata.
-- Any extraction quality warnings.
-- Source citation label used throughout the package.
-
-**Pinned-text provenance (when `--pkg` was used).** Record the versioned file
-the extraction produced, plus its fingerprint, so later sessions can verify
-they are reading the same text before reusing it:
-
-- The dated filename: `sources/full_text-<YYYYMMDD>.txt` or
-  `sources/full_text-<YYYYMMDD>-N.txt`.
-- `full_text_md5` and `full_text_lines` (read from `sources/metadata.json`).
-- A one-line note: "深读时先复用此文件（校验 md5/行数），勿重新提取；只有缺失或校验不符才重提取（仍传 `--pkg`）。"
-
-Any line-number table on the source page (chapter/subsection boundaries) must
-state which dated file its line numbers anchor to.
-
-Do not copy long source text into source pages.
-
-## Step 8: Generate Chapter Notes
-
-For each chapter or major section, create `chapters/ch<NN>-<slug>.md`.
-
-Use:
-
-```md
----
-type: ChapterNote
-title: Ch NN - Title
-description: Main point of this chapter.
-source_refs: [source-001]
-chapter_refs: [chNN]
-tags: [chapter]
-status: active
-timestamp: <ISO time>
----
-# Ch NN - Title
-
-## Core Idea
-
-## Key Concepts
-
-## Frameworks Introduced
-
-## Claims
-
-## Examples
-
-## Caveats
-
-## Links
-
-## Citations
-```
-
-For technical books, preserve compact code snippets, commands, tables, and API names when they are essential. Avoid long verbatim excerpts.
-
-## Step 8b: Deep-Read Subsections (when a chapter warrants it)
-
-Some chapters carry the book's core arguments densely, or are long and
-multi-part. When the user asks to **deep-read** a chapter, or you find a
-chapter contains claims/frameworks that later chapters depend on, split it
-into per-subsection notes instead of one recap.
-
-### When to do this
-
-- The user explicitly asks to deep-read or extract detailed notes for a chapter.
-- A chapter contains the book's load-bearing thesis (e.g. a definition, a
-  named framework, a multi-point manifesto) that other chapters build on.
-- A chapter is long (>~400 lines of extracted text) and has clearly named
-  subsections.
-
-### Directory layout
-
-Put subsection notes under `chapters/subsections/`, named
-`ch<NN>-s<MM>-<slug>.md` so they sort naturally and stay out of the top-level
-`chapters/` listing:
+When the user asks to deep-read a chapter, or a long chapter contains
+load-bearing claims, add subsection notes under `chapters/subsections/`:
 
 ```text
-chapters/
-├── index.md
-├── ch04-learning.md            ← chapter overview (links subsections)
-└── subsections/
-    ├── index.md
-    ├── log.md
-    ├── ch04-s01-unkneading.md
-    └── ch04-s09-beyond-reward.md
+chapters/subsections/ch04-s01-<slug>.md
 ```
 
-`chapters/subsections/` must have its own `index.md` and `log.md` (the
-validator treats any directory with `.md` content as needing an index).
+Subsection notes use `type: ChapterNote`, `tags: [subsection, ch04, ...]`, and
+link to previous/next subsection plus the chapter overview. Update:
 
-### Subsection frontmatter
+- chapter overview with a subsection table
+- `chapters/index.md`
+- `chapters/subsections/index.md`
+- relevant concept pages that depend on the subsection
+- `chapters/log.md` and `chapters/subsections/log.md`
 
-```yaml
----
-type: ChapterNote
-title: Ch4 §1 - Unkneading
-description: <what this subsection argues>
-source_refs: [source-001]
-chapter_refs: [ch04]          # parent chapter only; no per-subsection ref needed
-tags: [subsection, ch04, <topic>]
-status: active
-timestamp: <ISO time>
----
-```
+Core theses must be reachable both ways: from chapter/subsection notes to
+concepts, and from concept pages back to the evidence.
 
-Use the `subsection` tag plus a `ch<NN>` tag so subsections are easy to
-filter. Optionally add a `core-thesis` tag to subsections that carry the
-book's load-bearing claims.
+## Update Existing Wiki
 
-### Linking rules (this is what makes subsections discoverable)
+1. Read root `AGENTS.md`, `index.md`, `log.md`, and relevant directory indexes.
+2. Reuse pinned extraction if `sources/metadata.json` md5/line count matches the
+   source page. Re-extract with `--pkg` only if missing or mismatched.
+3. Add a new `source-<NNN>.md` only for genuinely new sources.
+4. Add new chapter/subsection notes as needed.
+5. Merge durable ideas into existing concept/framework/claim pages instead of
+   duplicating them.
+6. Update glossary, questions, indexes, and logs.
+7. Validate.
 
-1. **Within the chapter**: each subsection links to the previous and next
-   subsection, and to the chapter overview.
-2. **Chapter overview gets a subsection table**: add a `## Subsection notes`
-   section to the chapter overview page listing every subsection with a
-   one-line description.
-3. **Core-thesis reachability (Quality Rule 9)**: any subsection that states a
-   load-bearing claim **must be linked back from the relevant concept page**,
-   not only from the chapter. Otherwise the core argument is buried and an
-   agent reading the concept page will miss its source of truth.
-4. **Glossary**: terms coined or defined in a subsection should be added to
-   `glossary/terms.md` with a link back to the subsection.
-5. **Line-number anchoring**: when a subsection note cites a text span (e.g.
-   `full_text.txt 行 9128–9177`), anchor it to the **dated pinned file**
-   (`sources/full_text-<YYYYMMDD>.txt` or `sources/full_text-<YYYYMMDD>-N.txt`)
-   and reference the version/md5/lines recorded on the source page. This keeps
-   line refs stable across sessions — they must not silently refer to "whatever
-   `full_text.txt` happens to be this run", which is what causes drift.
+Never silently overwrite useful existing pages.
 
-### Updating indexes
+## Validate
 
-After writing subsections, update:
-- the chapter overview page (subsection table),
-- `chapters/index.md` (list the subsections under the chapter entry),
-- `subsections/index.md` (the directory's own index),
-- and append to `chapters/log.md` + `subsections/log.md`.
-
-## Step 9: Generate Concept Pages
-
-Create one page per durable concept in `concepts/`.
-
-Concept pages are the main LLM Wiki layer. They should synthesize across chapters instead of merely summarizing one chapter.
-
-Use:
-
-```md
----
-type: Concept
-title: <Concept>
-description: <What this concept means and why it matters.>
-source_refs: [source-001]
-chapter_refs: [ch02, ch05]
-tags: [concept]
-status: active
-timestamp: <ISO time>
----
-# <Concept>
-
-## Definition
-
-## Why It Matters
-
-## How To Use It
-
-## Related Concepts
-
-## Common Misreadings
-
-## Evidence And Citations
-```
-
-Link concepts to chapters, frameworks, and claims with relative Markdown links.
-
-## Step 10: Generate Framework Pages
-
-Create `frameworks/<framework>.md` for named methods, models, taxonomies, processes, checklists, or decision rules.
-
-Use:
-
-```md
----
-type: Framework
-title: <Framework Name>
-description: <When to use this framework.>
-source_refs: [source-001]
-chapter_refs: [ch04]
-tags: [framework]
-status: active
-timestamp: <ISO time>
----
-# <Framework Name>
-
-## Use When
-
-## Steps
-
-## Decision Rules
-
-## Worked Example
-
-## Failure Modes
-
-## Related
-
-## Citations
-```
-
-Preserve the author's exact framework names when meaningful.
-
-## Step 11: Generate Claim Pages
-
-Create `claims/<claim>.md` for important factual or argumentative claims.
-
-Claims are useful when the user wants to connect a book to other sources later.
-
-Use:
-
-```md
----
-type: Claim
-title: <Short claim>
-description: <The claim in one sentence.>
-source_refs: [source-001]
-chapter_refs: [ch06]
-tags: [claim]
-status: active
-timestamp: <ISO time>
----
-# <Short Claim>
-
-## Claim
-
-## Support In Source
-
-## Assumptions
-
-## Confidence
-
-## Related Concepts
-
-## Citations
-```
-
-Use `confidence` carefully. If the source is unclear, mark the claim as tentative.
-
-## Step 12: Generate Glossary and Questions
-
-`glossary/terms.md` should contain important terms, short definitions, and links to concept pages.
-
-`questions/open-questions.md` should contain:
-
-- Ambiguities in the source.
-- Questions to ask when applying the book.
-- Concepts that need external validation.
-- Potential contradictions.
-
-## Step 13: Update Indexes
-
-Every directory `index.md` should list files with one-line descriptions.
-
-The root `index.md` should include:
-
-- Concept index.
-- Framework index.
-- Claim index.
-- Chapter index.
-- Suggested context bundles:
-  - “minimal context”: root index + top concepts + glossary.
-  - “deep context”: root index + relevant chapters + frameworks + claims.
-
-## Step 14: Validate
-
-Copy or reference `tools/validate_okf_wiki.py` into the generated package, then run:
+Copy or reference `tools/validate_okf_wiki.py` into the package, then run:
 
 ```bash
 python3 tools/validate_okf_wiki.py .
-```
-
-Validation must check:
-
-- Root `index.md`, `log.md`, `AGENTS.md` exist.
-- Every directory with content has `index.md`.
-- Non-reserved `.md` files have YAML frontmatter.
-- Frontmatter includes non-empty `type`.
-- Internal Markdown links resolve.
-
-Fix errors before reporting completion. Warnings are acceptable only if explained.
-
-After the package passes, optionally run the advisory `--strict` mode to
-catch quality issues the shape check can't see:
-
-```bash
 python3 tools/validate_okf_wiki.py --strict .
 ```
 
-`--strict` prints (never fails on) notes about: orphan pages nothing links
-to, a missing or empty `glossary/terms.md`. Use it as a self-check before
-declaring done; address the notes that point at real gaps.
-
-## Update Existing Wiki Workflow
-
-When updating an existing package:
-
-1. Read root `AGENTS.md`, `index.md`, and `log.md`.
-2. Read relevant directory indexes.
-3. **Reuse the pinned extraction before re-extracting.** Check
-   `sources/full_text-<date>.txt` / `sources/full_text-<date>-N.txt` (or
-   `sources/full_text.txt`) and `sources/metadata.json`. If the file exists and
-   its `full_text_md5` / `full_text_lines` match what the source page records,
-   **read that file for deep-reading — do not re-extract.** Re-extraction causes
-   line-number drift; only re-extract (still passing `--pkg <package-dir>`) if
-   the file is missing or the checksum does not match, then re-pin line refs to
-   the new dated file.
-4. Add a new `sources/source-<NNN>.md` (only if a genuinely new source is added;
-   deep-reading existing chapters does not need a new source page).
-5. Create new chapter notes for new source sections.
-6. Merge durable ideas into existing concept/framework pages instead of duplicating them.
-7. Add or revise claims with source references.
-8. Update glossary and open questions.
-9. Update affected `index.md` files.
-10. Append to root `log.md` and affected directory `log.md`.
-11. Run validation.
-
-When **deep-reading new chapters** (Step 8b): add a back-link from each
-existing concept page to any new subsection that states a load-bearing claim
-(Quality Rule 9), so the core argument stays reachable from the concept
-layer.
-
-Never silently overwrite existing concept pages. Merge by preserving useful prior content, adding source references, and noting uncertainty when sources disagree.
+The first command must pass. Strict mode is advisory; fix real gaps it reports.
 
 ## Quality Rules
 
 1. Build a wiki, not a summary.
-2. Prefer durable concepts and frameworks over chapter-by-chapter recaps.
-3. Preserve source traceability with citations and source refs.
-4. Avoid long verbatim excerpts.
-5. Use dense, readable Markdown for humans.
-6. Make navigation obvious for agents.
-7. Put uncertainty into `questions/open-questions.md` instead of pretending the book is complete truth.
-8. Keep the package self-contained: the core understanding should survive if external URLs disappear, while citations still point outward when available.
-9. Core theses must be bidirectionally reachable: any subsection that states a load-bearing claim must be linked back from the relevant concept page, not only from its chapter — otherwise the argument is buried and an agent reading the concept page misses its source of truth.
+2. Keep source traceability with refs, citations, pinned filenames, md5, and
+   line counts.
+3. Make navigation obvious for humans and agents.
+4. Put uncertainty in `questions/open-questions.md`.
+5. Keep the package self-contained enough to survive dead external URLs.
+6. Prefer merging over duplicating when updating.
 
 ## Completion Report
 
-Report:
-
 ```text
-✅ OKF LLM Wiki package created: <path>
+OKF LLM Wiki package created: <path>
 
 Sources: <N>
 Chapters: <N>
@@ -699,8 +252,4 @@ Key files:
 - glossary/terms.md
 
 Validation: passed
-
-Use as agent context:
-1. Attach the package folder, or
-2. Start with index.md + AGENTS.md, then include relevant concept/framework/chapter pages.
 ```

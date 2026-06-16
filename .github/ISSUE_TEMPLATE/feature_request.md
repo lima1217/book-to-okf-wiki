@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an improvement to extraction, generation, or the skill format
+about: Suggest an improvement to extraction or wiki generation
 title: "[feat] "
 labels: enhancement
 ---
@@ -11,7 +11,6 @@ labels: enhancement
 ## Proposed change
 
 ## How would we know it's better?
-<!-- A measurable acceptance criterion: a token delta, a test, a before/after.
-     Changes that add weight without a demonstrated gain are unlikely to land. -->
+<!-- A test, validation check, token delta, or before/after. -->
 
 ## Alternatives considered

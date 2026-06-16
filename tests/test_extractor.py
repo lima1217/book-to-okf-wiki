@@ -24,8 +24,8 @@ import pytest
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from extractor.exceptions import ExtractionError
-from extractor.utils import (
+from extractor.exceptions import ExtractionError  # noqa: E402
+from extractor.utils import (  # noqa: E402
     resolve_input_files,
     extract_single_file,
     parse_arguments,
@@ -34,7 +34,7 @@ from extractor.utils import (
     _cn_numeral_to_int,
     main,
 )
-from extractor.config import SUPPORTED_EXTENSIONS
+from extractor.config import SUPPORTED_EXTENSIONS  # noqa: E402
 
 
 # ═══════════════════════════════════════════════════════════════════════════

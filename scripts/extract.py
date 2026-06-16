@@ -20,7 +20,7 @@ for _stream in (sys.stdout, sys.stderr):
 # so the modular package can be imported reliably regardless of the working directory.
 sys.path.insert(0, str(os.path.dirname(os.path.abspath(__file__))))
 
-from extractor.utils import main
+from extractor.utils import main  # noqa: E402
 
 if __name__ == "__main__":
     main()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import glob
 import hashlib
 import importlib.util
@@ -213,52 +214,17 @@ def detect_structure(text: str) -> dict:
 
 
 def parse_arguments(argv: list[str]) -> tuple[list[str], str, str]:
-    """Parse argv into (input_paths, extraction_mode, install_mode)."""
-    input_paths = []
-    extraction_mode = "text"
-    
-    args = argv[1:]
-    i = 0
-    while i < len(args):
-        arg = args[i]
-        if arg == "--mode":
-            if i + 1 < len(args):
-                extraction_mode = args[i+1].lower()
-                i += 2
-            else:
-                i += 1
-        elif arg == "--install-missing":
-            if i + 1 < len(args) and not args[i+1].startswith("--"):
-                i += 2
-            else:
-                i += 1
-        elif arg == "--workdir":
-            if i + 1 < len(args) and not args[i+1].startswith("--"):
-                i += 2
-            else:
-                i += 1
-        elif arg.startswith("--workdir="):
-            i += 1
-        elif arg == "--pkg":
-            if i + 1 < len(args) and not args[i+1].startswith("--"):
-                i += 2
-            else:
-                i += 1
-        elif arg.startswith("--pkg="):
-            i += 1
-        elif arg == "--no-install-missing":
-            i += 1
-        elif arg.startswith("-"):
-            i += 1
-        else:
-            input_paths.append(arg)
-            i += 1
-            
-    install_mode = normalize_install_mode(argv)
-    if extraction_mode not in ("technical", "text"):
-        extraction_mode = "text"
-        
-    return input_paths, extraction_mode, install_mode
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("inputs", nargs="*")
+    parser.add_argument("--mode", default="text")
+    parser.add_argument("--install-missing", nargs="?")
+    parser.add_argument("--no-install-missing", action="store_true")
+    parser.add_argument("--workdir")
+    parser.add_argument("--pkg")
+    ns, extras = parser.parse_known_args(argv[1:])
+    inputs = [*ns.inputs, *(arg for arg in extras if not arg.startswith("-"))]
+    mode = ns.mode.lower()
+    return inputs, mode if mode in {"technical", "text"} else "text", normalize_install_mode(argv)
 
 
 def resolve_input_files(paths: list[str]) -> list[Path]:
@@ -404,35 +370,25 @@ def extract_single_file(input_path: Path, extraction_mode: str, install_mode: st
                 
         if extraction_mode == "text" or not text:
             print("Mode: text — using pdftotext...")
-            print("Trying pdftotext...", end=" ", flush=True)
-            text = extract_with_pdftotext(input_str)
-            
-            if text:
-                method = "pdftotext"
-                print("OK")
-            else:
-                print("not available")
-                print("Trying PyPDF2...", end=" ", flush=True)
-                text = extract_with_pypdf2(input_str)
+            for method, extractor in (
+                ("pdftotext", extract_with_pdftotext),
+                ("PyPDF2", extract_with_pypdf2),
+                ("pdfminer", extract_with_pdfminer),
+            ):
+                print(f"Trying {method}...", end=" ", flush=True)
+                text = extractor(input_str)
                 if text:
-                    method = "PyPDF2"
                     print("OK")
-                else:
-                    print("not available")
-                    print("Trying pdfminer.six...", end=" ", flush=True)
-                    text = extract_with_pdfminer(input_str)
-                    if text:
-                        method = "pdfminer"
-                        print("OK")
-                    else:
-                        print("FAILED")
-                        raise ExtractionError(
-                            "Could not extract text from PDF.\n"
-                            "Install one of: poppler-utils (pdftotext), PyPDF2, or pdfminer.six\n"
-                            "  sudo apt install poppler-utils\n"
-                            "  pip3 install PyPDF2\n"
-                            "  pip3 install pdfminer.six"
-                        )
+                    break
+                print("not available")
+            if not text:
+                raise ExtractionError(
+                    "Could not extract text from PDF.\n"
+                    "Install one of: poppler-utils (pdftotext), PyPDF2, or pdfminer.six\n"
+                    "  sudo apt install poppler-utils\n"
+                    "  pip3 install PyPDF2\n"
+                    "  pip3 install pdfminer.six"
+                )
                         
         pages = count_pages(input_str)
         pages_label = "pages"
@@ -580,29 +536,13 @@ def _chapter_map_with_line_offset(chapter_map: list[dict], line_offset: int) -> 
 
 
 def _source_text_line_offsets(consolidated_text: str, sources: list[dict]) -> list[int]:
-    """Find each source text's starting line inside the written full_text file.
-
-    Per-source extraction detects chapter lines in the raw source text, but the
-    final full_text file prepends a SOURCE separator for each source. Source-page
-    line references need the final written-file coordinates, not raw coordinates.
-    """
     offsets: list[int] = []
     search_pos = 0
     for src in sources:
         marker = f"SOURCE: {src['filename']} (Path: {src['source_file']})"
         marker_index = consolidated_text.find(marker, search_pos)
-        if marker_index == -1:
-            offsets.append(0)
-            continue
-        source_text = src["text"].strip()
-        text_index = consolidated_text.find(source_text, marker_index + len(marker))
-        if text_index == -1:
-            offsets.append(0)
-            search_pos = marker_index + len(marker)
-            continue
-        text_start_line = consolidated_text[:text_index].count("\n") + 1
-        offsets.append(text_start_line - 1)
-        search_pos = text_index + len(source_text)
+        offsets.append(0 if marker_index == -1 else consolidated_text[:marker_index].count("\n") + 3)
+        search_pos = marker_index + len(marker)
     return offsets
 
 
