@@ -1,6 +1,6 @@
 ---
 name: book-to-okf-wiki
-description: "Convert books and documents (PDF, EPUB, DOCX, HTML, Markdown, plain text, RTF, MOBI/AZW with Calibre) into self-contained OKF-compatible LLM Wiki knowledge packages, not agent skills. Use when the user wants a portable Markdown knowledge bundle with index.md, log.md, AGENTS.md, sources, chapters, concepts, frameworks, claims, glossary, questions, citations, and validation."
+description: "Convert books and documents (PDF, EPUB, DOCX, HTML, Markdown, plain text, RTF, MOBI/AZW with Calibre) into self-contained OKF-compatible LLM Wiki knowledge packages, not agent skills. Use when the user wants a portable, source-grounded, concept-first Markdown knowledge bundle with index.md, log.md, AGENTS.md, sources, chapters, concepts, frameworks, claims, glossary, questions, citations, and validation."
 ---
 
 # Book to OKF Wiki
@@ -10,6 +10,21 @@ output is not an agent skill; it is a portable OKF-compatible LLM Wiki that a
 human can browse and any agent can use as context.
 
 Use Chinese content when the user writes in Chinese or asks for Chinese.
+
+## Leitworter
+
+Keep these behavior anchors active while working:
+
+- **Source-grounded wiki**: build durable knowledge from pinned evidence, not a
+  fluent book report.
+- **Concept-first synthesis**: extract concepts, frameworks, and claims before
+  chapter recaps.
+- **Bidirectional traceability**: every durable idea links back to source lines
+  and forward to the pages that use it.
+- **Navigation spine**: indexes, logs, and AGENTS.md make the package usable by
+  both humans and agents.
+- **Uncertainty ledger**: unresolved ambiguity belongs in
+  `questions/open-questions.md`, not hidden in prose.
 
 ## Modes
 
@@ -223,13 +238,14 @@ The first command must pass. Strict mode is advisory; fix real gaps it reports.
 
 ## Quality Rules
 
-1. Build a wiki, not a summary.
-2. Keep source traceability with refs, citations, pinned filenames, md5, and
+1. Build a source-grounded wiki, not a summary.
+2. Use concept-first synthesis before chapter recaps.
+3. Keep bidirectional traceability with refs, citations, pinned filenames, md5, and
    line counts.
-3. Make navigation obvious for humans and agents.
-4. Put uncertainty in `questions/open-questions.md`.
-5. Keep the package self-contained enough to survive dead external URLs.
-6. Prefer merging over duplicating when updating.
+4. Make the navigation spine obvious for humans and agents.
+5. Put uncertainty in `questions/open-questions.md`.
+6. Keep the package self-contained enough to survive dead external URLs.
+7. Prefer merging over duplicating when updating.
 
 ## Completion Report
 
