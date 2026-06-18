@@ -629,7 +629,7 @@ def main():
     # copy now lives under sources/. `full_text_lines` uses the same 1-based
     # convention as the line numbers quoted in source pages / subsection notes.
     full_text_bytes = out_text.read_bytes()
-    full_text_md5 = hashlib.md5(full_text_bytes).hexdigest()
+    full_text_md5 = hashlib.md5(full_text_bytes, usedforsecurity=False).hexdigest()
     full_text_lines = consolidated_text.count("\n") + (
         0 if (not consolidated_text or consolidated_text.endswith("\n")) else 1
     )

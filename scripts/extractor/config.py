@@ -31,7 +31,7 @@ def per_source_workdir(source_identifier: str) -> Path:
     book filename don't produce an invalid path, and two books with the same
     stem but different paths still collide only on content+path hash.
     """
-    digest = hashlib.sha1(source_identifier.encode("utf-8")).hexdigest()[:12]
+    digest = hashlib.sha1(source_identifier.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
     # Keep a short human-readable prefix when the identifier looks like a path
     stem = Path(source_identifier).stem[:32].replace(" ", "-") or "source"
     return DEFAULT_BASE_WORKDIR / f"{stem}-{digest}"
