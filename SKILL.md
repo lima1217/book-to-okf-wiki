@@ -9,7 +9,23 @@ Turn source documents into a self-contained Markdown knowledge package. The
 output is not an agent skill; it is a portable OKF-compatible LLM Wiki that a
 human can browse and any agent can use as context.
 
-Use Chinese content when the user writes in Chinese or asks for Chinese.
+Write package prose in Chinese. Keep the package slug and fixed directory names
+in English.
+
+## Language and Naming
+
+- Name the package directory with a lowercase English kebab-case slug, such as
+  `systems-thinking-wiki`.
+- Keep fixed directory names in English: `sources/`, `chapters/`, `concepts/`,
+  `frameworks/`, `claims/`, `glossary/`, `questions/`, and `tools/`.
+- Name every human-authored Markdown knowledge page in Chinese. The only
+  reserved English Markdown filenames are `index.md`, `log.md`, and
+  `AGENTS.md`.
+- Write all Markdown prose in Chinese, including those three reserved files.
+  Preserve exact source terms, code, commands, API names, citations, YAML keys,
+  and fixed `type` values when translation would reduce precision.
+- Keep machine-generated support artifacts unchanged, including
+  `full_text*.txt`, `metadata.json`, and `validate_okf_wiki.py`.
 
 ## Leitworter
 
@@ -24,7 +40,7 @@ Keep these behavior anchors active while working:
 - **Navigation spine**: indexes, logs, and AGENTS.md make the package usable by
   both humans and agents.
 - **Uncertainty ledger**: unresolved ambiguity belongs in
-  `questions/open-questions.md`, not hidden in prose.
+  `questions/待解决问题.md`, not hidden in prose.
 
 ## Modes
 
@@ -136,18 +152,18 @@ Create this tree:
 ├── sources/
 │   ├── index.md
 │   ├── log.md
-│   └── source-001.md
+│   └── 来源-001.md
 ├── chapters/
 │   ├── index.md
 │   ├── log.md
-│   └── ch01-<slug>.md
+│   └── 第01章-<中文短名>.md
 ├── concepts/
 ├── frameworks/
 ├── claims/
 ├── glossary/
-│   └── terms.md
+│   └── 术语.md
 ├── questions/
-│   └── open-questions.md
+│   └── 待解决问题.md
 └── tools/
     └── validate_okf_wiki.py
 ```
@@ -155,18 +171,19 @@ Create this tree:
 Every directory with Markdown content needs `index.md`; meaningful directories
 also get `log.md`.
 
-Reserved files: `index.md`, `log.md`.
+Reserved English filenames: `index.md`, `log.md`, `AGENTS.md`. All other
+human-authored Markdown filenames must be Chinese.
 
 Every other Markdown file starts with YAML frontmatter and a non-empty `type`:
 
 ```yaml
 ---
 type: Concept
-title: Example
-description: One-sentence summary.
+title: 示例概念
+description: 一句话摘要。
 source_refs: [source-001]
 chapter_refs: [ch03]
-tags: [core]
+tags: [核心]
 status: active
 timestamp: 2026-06-15T00:00:00Z
 ---
@@ -180,17 +197,17 @@ Useful `type` values: `AgentGuide`, `Source`, `ChapterNote`, `Concept`,
 - `AGENTS.md`: how agents should read, cite, update logs, and treat uncertainty.
 - root `index.md`: title, author, sources, scope, human reading path, agent
   context path, directory links, top concepts/frameworks.
-- `sources/source-<NNN>.md`: original path, format, extraction method, metadata,
+- `sources/来源-<NNN>.md`: original path, format, extraction method, metadata,
   warnings, source citation label, pinned text filename, md5, line count.
-- `chapters/ch<NN>-<slug>.md`: core idea, key concepts, frameworks, claims,
+- `chapters/第<NN>章-<中文短名>.md`: core idea, key concepts, frameworks, claims,
   examples, caveats, links, citations.
-- `concepts/<concept>.md`: synthesized durable concepts across chapters.
-- `frameworks/<framework>.md`: named methods, models, taxonomies, checklists, or
+- `concepts/<中文概念>.md`: synthesized durable concepts across chapters.
+- `frameworks/<中文框架>.md`: named methods, models, taxonomies, checklists, or
   decision rules.
-- `claims/<claim>.md`: important factual or argumentative claims with support,
+- `claims/<中文主张>.md`: important factual or argumentative claims with support,
   assumptions, confidence, related concepts, citations.
-- `glossary/terms.md`: terms, short definitions, links.
-- `questions/open-questions.md`: ambiguities, application questions,
+- `glossary/术语.md`: terms, short definitions, links.
+- `questions/待解决问题.md`: ambiguities, application questions,
   contradictions, items needing external validation.
 
 Prefer concept/framework/claim pages over chapter recaps. Preserve essential
@@ -198,8 +215,9 @@ technical snippets, commands, tables, API names, and exact framework names.
 Avoid long verbatim excerpts.
 
 Writing is complete only when every load-bearing claim is either supported by
-dated-file line citations or recorded in `questions/open-questions.md`, and
-every created page is reachable from an index.
+dated-file line citations or recorded in `questions/待解决问题.md`, every
+created page is reachable from an index, and all human-authored Markdown prose
+and non-reserved filenames follow the Chinese-language rule above.
 
 ## Deep Read
 
@@ -207,7 +225,7 @@ When the user asks to deep-read a chapter, or a long chapter contains
 load-bearing claims, add subsection notes under `chapters/subsections/`:
 
 ```text
-chapters/subsections/ch04-s01-<slug>.md
+chapters/subsections/第04章-第01节-<中文短名>.md
 ```
 
 Subsection notes use `type: ChapterNote`, `tags: [subsection, ch04, ...]`, and
@@ -227,7 +245,7 @@ concepts, and from concept pages back to the evidence.
 1. Read root `AGENTS.md`, `index.md`, `log.md`, and relevant directory indexes.
 2. Reuse pinned extraction if `sources/metadata.json` md5/line count matches the
    source page. Re-extract with `--pkg` only if missing or mismatched.
-3. Add a new `source-<NNN>.md` only for genuinely new sources.
+3. Add a new `来源-<NNN>.md` only for genuinely new sources.
 4. Add new chapter/subsection notes as needed.
 5. Merge durable ideas into existing concept/framework/claim pages instead of
    duplicating them.
@@ -265,7 +283,7 @@ Key files:
 - frameworks/
 - chapters/
 - claims/
-- glossary/terms.md
+- glossary/术语.md
 
 Validation: passed
 ```

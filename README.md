@@ -42,6 +42,9 @@ Examples:
 
 The package keeps pinned extracted text in `sources/` when extraction runs with
 `--pkg`, so later updates can reuse the same text and stable line references.
+Package and directory names stay in English. Human-authored Markdown filenames
+and prose use Chinese, except the reserved filenames `index.md`, `log.md`, and
+`AGENTS.md`.
 
 ## Extractor
 
