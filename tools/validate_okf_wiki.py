@@ -2,6 +2,7 @@
 """Validate a self-contained OKF-compatible LLM Wiki package."""
 from __future__ import annotations
 
+import posixpath
 import re
 import sys
 import urllib.parse
@@ -61,7 +62,12 @@ def validate(root: Path) -> int:
             if not target or is_external(target):
                 continue
             target = urllib.parse.unquote(target)
-            dest = (root / target.lstrip("/")) if target.startswith("/") else (path.parent / target)
+            if target.startswith("/"):
+                errors.append(
+                    f"{path.relative_to(root)}: absolute link -> {raw_target}; use a relative path"
+                )
+                continue
+            dest = path.parent / target
             if raw_target.endswith("/") or target.endswith("/"):
                 dest = dest / "index.md"
             if not dest.exists():
@@ -103,11 +109,13 @@ def _collect_link_targets(root: Path) -> dict:
             if not target or is_external(target):
                 continue
             target = urllib.parse.unquote(target)
-            dest = (root / target.lstrip("/")) if target.startswith("/") else (src.parent / target)
+            if target.startswith("/"):
+                continue
+            dest = src.parent / target
             if raw_target.endswith("/") or target.endswith("/"):
                 dest = dest / "index.md"
             if dest.exists():
-                rel = dest.resolve().relative_to(root.resolve()).as_posix()
+                rel = posixpath.normpath(dest.relative_to(root).as_posix())
                 inbound.setdefault(rel, set()).add(src.relative_to(root).as_posix())
     return inbound
 
@@ -155,9 +163,9 @@ def main() -> int:
     # strip flags to find the root path argument
     positional = [a for a in args if not a.startswith("--")]
     root = Path(positional[0]) if positional else Path(".")
-    code = validate(root.resolve())
+    code = validate(root)
     if strict and code == 0:
-        strict_warns = strict_checks(root.resolve())
+        strict_warns = strict_checks(root)
         if strict_warns:
             print("\nOKF wiki strict-mode notes (advisory, do not affect pass/fail):")
             for w in strict_warns:

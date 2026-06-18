@@ -1,6 +1,6 @@
 ---
 name: book-to-okf-wiki
-description: "Convert books and documents (PDF, EPUB, DOCX, HTML, Markdown, plain text, RTF, MOBI/AZW with Calibre) into self-contained OKF-compatible LLM Wiki knowledge packages, not agent skills. Use when the user wants a portable, source-grounded, concept-first Markdown knowledge bundle with index.md, log.md, AGENTS.md, sources, chapters, concepts, frameworks, claims, glossary, questions, citations, and validation."
+description: "Convert books and document collections into self-contained, source-grounded OKF LLM Wiki packages, not agent skills. Use for a new portable Markdown knowledge base, a deep read added to an existing package, or an existing package updated from new sources."
 ---
 
 # Book to OKF Wiki
@@ -49,9 +49,10 @@ book-to-okf-wiki creates OKF LLM Wiki packages. Provide a supported document pat
 Usage: book-to-okf-wiki <path-or-glob>... [package-slug]
 ```
 
-## Ask Once
+## Classify Once
 
-Before extraction, ask:
+Before extraction, ask unless the user already supplied an equivalent
+classification:
 
 ```text
 这些资料属于哪类？
@@ -93,6 +94,9 @@ writes reusable pinned source text inside the package:
 Read `sources/metadata.json` before writing notes. Anchor line references to
 the dated file, not to the moving `full_text.txt`.
 
+Extraction is complete only when `sources/metadata.json` and the dated pinned
+text exist, and their paths, md5, and line count are readable.
+
 For large books, do not load the whole text. Use `rg`, `grep`, `sed`, and `wc`
 against the pinned file. EPUB extraction may include:
 
@@ -116,6 +120,9 @@ Before creating a new package, show:
 
 Ask for confirmation. If the user says "analyze only", stop after the analysis
 report.
+
+This phase is complete only after the user confirms the displayed scope, or
+the analyze-only report has been delivered.
 
 ## Package Shape
 
@@ -190,6 +197,10 @@ Prefer concept/framework/claim pages over chapter recaps. Preserve essential
 technical snippets, commands, tables, API names, and exact framework names.
 Avoid long verbatim excerpts.
 
+Writing is complete only when every load-bearing claim is either supported by
+dated-file line citations or recorded in `questions/open-questions.md`, and
+every created page is reachable from an index.
+
 ## Deep Read
 
 When the user asks to deep-read a chapter, or a long chapter contains
@@ -235,17 +246,6 @@ python3 tools/validate_okf_wiki.py --strict .
 ```
 
 The first command must pass. Strict mode is advisory; fix real gaps it reports.
-
-## Quality Rules
-
-1. Build a source-grounded wiki, not a summary.
-2. Use concept-first synthesis before chapter recaps.
-3. Keep bidirectional traceability with refs, citations, pinned filenames, md5, and
-   line counts.
-4. Make the navigation spine obvious for humans and agents.
-5. Put uncertainty in `questions/open-questions.md`.
-6. Keep the package self-contained enough to survive dead external URLs.
-7. Prefer merging over duplicating when updating.
 
 ## Completion Report
 

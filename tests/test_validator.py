@@ -63,6 +63,12 @@ class TestDefaultModeUnchanged:
         (tmp_path / "concepts" / "x.md").write_text("# no frontmatter\n")
         assert validate_mod.validate(tmp_path) == 1
 
+    def test_absolute_link_fails(self, tmp_path, capsys):
+        _write_valid_skeleton(tmp_path)
+        (tmp_path / "index.md").write_text("[Concept](/concepts/x.md)\n")
+        assert validate_mod.validate(tmp_path) == 1
+        assert "use a relative path" in capsys.readouterr().out
+
 
 # ---------------------------------------------------------------------------
 # --strict mode: advisory notes printed, exit code unchanged.
@@ -124,3 +130,11 @@ class TestStrictDoesNotAffectExitCode:
         out = capsys.readouterr().out
         assert code == 0, "strict must never fail the build"
         assert "orphan" in out.lower()
+
+    def test_main_accepts_moved_package_by_relative_path(self, tmp_path, monkeypatch):
+        package = tmp_path / "moved-package"
+        package.mkdir()
+        _write_valid_skeleton(package)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr("sys.argv", ["validate_okf_wiki.py", "moved-package"])
+        assert validate_mod.main() == 0
