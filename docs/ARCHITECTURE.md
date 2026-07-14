@@ -28,7 +28,10 @@ documents
 
 | Path | Purpose |
 | --- | --- |
-| `SKILL.md` | Agent workflow for package generation and updates |
+| `SKILL.md` | Full-conversion steps; points at branch/reference files |
+| `PACKAGE.md` | Naming, tree, frontmatter, page contents |
+| `DEEP-READ.md` | Deep-read / subsection branch |
+| `UPDATE.md` | Update-existing-package branch |
 | `scripts/extract.py` | Extraction entrypoint |
 | `tools/validate_okf_wiki.py` | Validates generated packages |
 | `tools/validate_skill.py` | Validates this skill file for supported hosts |

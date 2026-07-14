@@ -120,6 +120,42 @@ class TestStrictGlossary:
         warns = validate_mod.strict_checks(tmp_path)
         assert not any("[glossary]" in w for w in warns), warns
 
+    def test_strict_accepts_chinese_glossary_name(self, tmp_path):
+        # The skill's naming rule requires Chinese filenames (术语.md); the
+        # validator must not flag a compliant package as "missing glossary".
+        _write_valid_skeleton(tmp_path)
+        (tmp_path / "glossary").mkdir()
+        (tmp_path / "glossary" / "术语.md").write_text(
+            "# 术语表\n\n- **控制** — definition\n"
+        )
+        (tmp_path / "index.md").write_text(
+            "# Root\n\n- [Terms](glossary/术语.md)\n"
+        )
+        warns = validate_mod.strict_checks(tmp_path)
+        assert not any("[glossary]" in w for w in warns), warns
+
+    def test_strict_accepts_table_format_glossary(self, tmp_path):
+        # The skill's examples use table rows (`| **Term** | def |`) as often
+        # as list rows; both should count as populated.
+        _write_valid_skeleton(tmp_path)
+        (tmp_path / "glossary").mkdir()
+        (tmp_path / "glossary" / "术语.md").write_text(
+            "# 术语表\n\n| 术语 | 定义 |\n| --- | --- |\n| **控制** | def |\n"
+        )
+        warns = validate_mod.strict_checks(tmp_path)
+        assert not any("[glossary]" in w for w in warns), warns
+
+    def test_strict_discovers_glossary_by_type_frontmatter(self, tmp_path):
+        # A glossary under a non-canonical name should still be found if it
+        # declares type: Glossary.
+        _write_valid_skeleton(tmp_path)
+        (tmp_path / "glossary").mkdir()
+        (tmp_path / "glossary" / "词汇.md").write_text(
+            "---\ntype: Glossary\ntitle: 词汇\n---\n\n- **Term** — def\n"
+        )
+        warns = validate_mod.strict_checks(tmp_path)
+        assert not any("[glossary]" in w for w in warns), warns
+
 
 class TestStrictDoesNotAffectExitCode:
     def test_strict_mode_still_returns_zero_on_orphan(self, tmp_path, capsys, monkeypatch):

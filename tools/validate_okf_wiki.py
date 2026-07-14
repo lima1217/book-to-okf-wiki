@@ -120,6 +120,35 @@ def _collect_link_targets(root: Path) -> dict:
     return inbound
 
 
+def _find_glossary(root: Path) -> Path | None:
+    """Locate the package's glossary page.
+
+    Discovery order:
+      1. A glossary/*.md whose YAML frontmatter declares `type: Glossary`.
+      2. The canonical filenames the skill documents: glossary/术语.md
+         (Chinese, the naming-rule default) then the legacy glossary/terms.md.
+    Returns the first match, or None if no glossary exists.
+    """
+    glossary_dir = root / "glossary"
+    if not glossary_dir.is_dir():
+        return None
+    # 1. Content-based: any glossary/*.md with type: Glossary.
+    candidates = sorted(glossary_dir.glob("*.md"))
+    for cand in candidates:
+        if cand.name in RESERVED:
+            continue
+        text = cand.read_text(encoding="utf-8", errors="ignore")
+        match = FRONTMATTER_RE.match(text)
+        if match and re.search(r"^type:\s*Glossary\s*$", match.group("yaml"), re.M):
+            return cand
+    # 2. Canonical filenames (Chinese default, then legacy English).
+    for name in ("术语.md", "terms.md"):
+        cand = glossary_dir / name
+        if cand.exists():
+            return cand
+    return None
+
+
 def strict_checks(root: Path) -> list:
     """Additional quality warnings beyond shape validation.
 
@@ -139,15 +168,27 @@ def strict_checks(root: Path) -> list:
             warns.append(f"[orphan] {rel}: no other page links to it — add a link from the relevant index or concept page")
 
     # 2. Glossary presence.
-    glossary = root / "glossary" / "terms.md"
-    if not glossary.exists():
-        warns.append("[glossary] glossary/terms.md missing — add key terms for agent lookups")
-    elif glossary.exists():
+    # Discover by content (type: Glossary) first, then by the canonical names
+    # the skill allows: the Chinese 术语.md (per the skill's naming rule) and
+    # the legacy English terms.md. This avoids a false "missing" warning for
+    # packages that correctly follow the Chinese-filename convention.
+    glossary = _find_glossary(root)
+    if glossary is None:
+        warns.append(
+            "[glossary] no glossary found — add a glossary/ page (type: Glossary, "
+            "e.g. glossary/术语.md) with key terms for agent lookups"
+        )
+    else:
         text = glossary.read_text(encoding="utf-8", errors="ignore")
-        # count bold term entries
-        term_count = len(re.findall(r"^- \*\*", text, re.MULTILINE))
-        if term_count == 0:
-            warns.append("[glossary] glossary/terms.md is empty — add key terms")
+        # Count bold term entries in either list form ("- **Term** …") or the
+        # table form the skill's examples also use ("| **Term** | …").
+        list_terms = len(re.findall(r"^- \*\*", text, re.MULTILINE))
+        table_terms = len(re.findall(r"^\|\s*\*\*", text, re.MULTILINE))
+        if list_terms + table_terms == 0:
+            warns.append(
+                f"[glossary] {glossary.relative_to(root)} has no bold term entries "
+                "— add key terms (as `- **Term** — def` or `| **Term** | def |`)"
+            )
 
     # 3. Zero-inbound concept/chapter pages (core-thesis reachability hint).
     for rel, referrers in sorted(inbound.items()):
