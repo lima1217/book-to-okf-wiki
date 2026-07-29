@@ -5,7 +5,7 @@ description: "Source-grounded OKF LLM Wiki from books and document collections. 
 
 # Book to OKF Wiki
 
-Build a portable Markdown OKF LLM Wiki from pinned source evidence — a
+Build a portable Markdown OKF v0.2 LLM Wiki from pinned source evidence — a
 browsable knowledge package any agent can load as context.
 
 ## Leitworter
@@ -103,13 +103,15 @@ has been delivered.
 
 Read [PACKAGE.md](PACKAGE.md) and build the package it specifies.
 
-Done when: every load-bearing claim has a dated-file line citation or an entry
-in `questions/待解决问题.md`; every created page is reachable from an index;
-naming and prose follow PACKAGE.md.
+Done when: every load-bearing claim carries a footnote keyed to a `sources[].id`
+with its dated-file line range, or an entry in `questions/待解决问题.md`; every
+created page is reachable from an index; naming, frontmatter, and prose follow
+PACKAGE.md.
 
 ### 5. Validate
 
-Copy or reference `tools/validate_okf_wiki.py` into the package, then:
+Copy or overwrite `tools/validate_okf_wiki.py` into the package with this
+skill's copy (pre-v0.2 validators reject `/`-rooted links), then:
 
 ```bash
 python3 tools/validate_okf_wiki.py .

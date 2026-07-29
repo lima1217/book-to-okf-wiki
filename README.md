@@ -1,6 +1,7 @@
 # book-to-okf-wiki
 
-Convert books and document collections into OKF-compatible LLM Wiki packages.
+Convert books and document collections into LLM Wiki packages conformant with
+[OKF v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md).
 The output is a portable Markdown folder, not an installable agent skill.
 
 ## Inspiration
@@ -43,8 +44,12 @@ Examples:
 The package keeps pinned extracted text in `sources/` when extraction runs with
 `--pkg`, so later updates can reuse the same text and stable line references.
 Package and directory names stay in English. Human-authored Markdown filenames
-and prose use Chinese, except the reserved filenames `index.md`, `log.md`, and
-`AGENTS.md`.
+and prose use Chinese, except `index.md`, `log.md`, and `AGENTS.md`.
+
+Pages carry the OKF v0.2 trust families — `generated`, optional `verified`,
+`status`, `stale_after` — cite sources through footnotes keyed to
+`sources[].id`, and link each other with bundle-relative paths starting at the
+package root (`/concepts/系统结构.md`).
 
 ## Extractor
 

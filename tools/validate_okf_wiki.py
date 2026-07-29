@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Validate a self-contained OKF-compatible LLM Wiki package."""
+"""Validate a self-contained LLM Wiki package targeting OKF v0.2.
+
+Errors cover OKF §11 shape failures (parseable frontmatter, non-empty `type`),
+broken intra-package links (producer gate — consumers must tolerate them per
+§11), and this package's required root `okf_version: "0.2"` declaration.
+Everything else — package conventions and v0.1 leftovers — prints as a warning.
+"""
 from __future__ import annotations
 
 import posixpath
@@ -9,9 +15,94 @@ import urllib.parse
 from pathlib import Path
 
 
+OKF_VERSION = "0.2"
 RESERVED = {"index.md", "log.md"}
+STATUS_VALUES = {"draft", "stable", "deprecated"}
 FRONTMATTER_RE = re.compile(r"^---\s*\n(?P<yaml>.*?)\n---\s*\n", re.S)
 LINK_RE = re.compile(r"!?\[[^\]]+\]\(([^)]+)\)")
+FOOTNOTE_REF_RE = re.compile(r"\[\^([^\]]+)\]")
+FOOTNOTE_DEF_RE = re.compile(r"^\[\^([^\]]+)\]:", re.M)
+SOURCE_ID_RE = re.compile(r"^\s+-\s*(?:\{\s*)?id:\s*([^\s,}]+)", re.M)
+LEGACY_CITATIONS_RE = re.compile(r"^#{1,6}\s*(?:引用|Citations)\s*$", re.M)
+SOURCE_ENTRY_START_RE = re.compile(r"^\s+-\s+")
+SOURCE_RESOURCE_RE = re.compile(r"(?:^|\s)resource\s*:")
+
+
+def frontmatter_of(text: str) -> str | None:
+    match = FRONTMATTER_RE.match(text)
+    return match.group("yaml") if match else None
+
+
+def _sources_entries_missing_resource(yaml_text: str) -> list[str]:
+    """Return display labels for sources[] entries that omit resource (§5.1)."""
+    lines = yaml_text.splitlines()
+    in_sources = False
+    entries: list[list[str]] = []
+    current: list[str] | None = None
+
+    for line in lines:
+        if re.match(r"^sources:\s*(?:\[.*\])?\s*$", line):
+            in_sources = True
+            current = None
+            # Flow form on one line: sources: [{id: x, resource: y}, ...]
+            if "[" in line and not SOURCE_RESOURCE_RE.search(line):
+                # Only flag when the line clearly carries at least one mapping
+                # entry and none of them name resource.
+                if "{" in line:
+                    return ["(inline sources entry)"]
+            continue
+        if not in_sources:
+            continue
+        if line.strip() and not line[0].isspace():
+            break
+        if SOURCE_ENTRY_START_RE.match(line):
+            if current is not None:
+                entries.append(current)
+            current = [line]
+        elif current is not None:
+            current.append(line)
+    if current is not None:
+        entries.append(current)
+
+    missing: list[str] = []
+    for entry in entries:
+        blob = "\n".join(entry)
+        if SOURCE_RESOURCE_RE.search(blob):
+            continue
+        id_match = re.search(r"\bid:\s*([^\s,}]+)", blob)
+        missing.append(id_match.group(1) if id_match else "(unnamed entry)")
+    return missing
+
+
+def check_frontmatter(rel: str, yaml_text: str) -> tuple[list[str], list[str]]:
+    """Return (errors, warnings) for one concept document's frontmatter."""
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    type_match = re.search(r"^type:\s*(.+?)\s*$", yaml_text, re.M)
+    if not type_match or not type_match.group(1).strip():
+        errors.append(f"{rel}: missing non-empty type")
+
+    status_match = re.search(r"^status:\s*(\S+)\s*$", yaml_text, re.M)
+    if status_match and status_match.group(1) not in STATUS_VALUES:
+        warnings.append(
+            f"{rel}: status '{status_match.group(1)}' is not one of "
+            f"{sorted(STATUS_VALUES)} (OKF v0.2 §5.4)"
+        )
+
+    has_generated = re.search(r"^generated:", yaml_text, re.M)
+    if re.search(r"^timestamp:", yaml_text, re.M) and not has_generated:
+        warnings.append(f"{rel}: v0.1 timestamp — replace with generated: {{ by, at }} (§5.2)")
+    if re.search(r"^source_refs:", yaml_text, re.M):
+        warnings.append(f"{rel}: v0.1 source_refs — replace with the sources family (§5.1)")
+
+    for label in _sources_entries_missing_resource(yaml_text):
+        warnings.append(
+            f"{rel}: sources[] entry {label} is missing resource "
+            "(required within each entry, OKF v0.2 §5.1)"
+        )
+
+    return errors, warnings
 
 
 def is_external(target: str) -> bool:
@@ -47,15 +138,47 @@ def validate(root: Path) -> int:
 
         text = path.read_text(encoding="utf-8", errors="ignore")
 
+        rel = str(path.relative_to(root))
+        yaml_text = frontmatter_of(text)
+
         if path.name not in RESERVED:
-            match = FRONTMATTER_RE.match(text)
-            if not match:
-                errors.append(f"{path.relative_to(root)}: missing YAML frontmatter")
+            if yaml_text is None:
+                errors.append(f"{rel}: missing YAML frontmatter")
             else:
-                yaml_text = match.group("yaml")
-                type_match = re.search(r"^type:\s*(.+?)\s*$", yaml_text, re.M)
-                if not type_match or not type_match.group(1).strip():
-                    errors.append(f"{path.relative_to(root)}: missing non-empty type")
+                fm_errors, fm_warnings = check_frontmatter(rel, yaml_text)
+                errors.extend(fm_errors)
+                warnings.extend(fm_warnings)
+            if LEGACY_CITATIONS_RE.search(text):
+                warnings.append(
+                    f"{rel}: v0.1 citations heading — move the list into the sources "
+                    "family and cite it with keyed footnotes (§5.1)"
+                )
+        elif path.name == "index.md":
+            is_root_index = path.parent == root
+            version_match = (
+                re.search(r'^okf_version:\s*["\']?([^"\'\s]+)["\']?\s*$', yaml_text, re.M)
+                if yaml_text
+                else None
+            )
+            declares_target = bool(
+                version_match and version_match.group(1) == OKF_VERSION
+            )
+            if is_root_index and not declares_target:
+                declared = version_match.group(1) if version_match else None
+                if declared is None:
+                    errors.append(
+                        f'{rel}: root index must declare okf_version: "{OKF_VERSION}" '
+                        "(package requirement; OKF §12 makes the field optional)"
+                    )
+                else:
+                    errors.append(
+                        f'{rel}: okf_version is "{declared}", expected "{OKF_VERSION}"'
+                    )
+            elif yaml_text is not None and not (is_root_index and declares_target):
+                warnings.append(
+                    f"{rel}: index.md carries frontmatter; only the root index may, "
+                    "and only okf_version (§8)"
+                )
 
         for raw_target in LINK_RE.findall(text):
             target = raw_target.strip().split("#", 1)[0]
@@ -63,11 +186,13 @@ def validate(root: Path) -> int:
                 continue
             target = urllib.parse.unquote(target)
             if target.startswith("/"):
-                errors.append(
-                    f"{path.relative_to(root)}: absolute link -> {raw_target}; use a relative path"
+                dest = root / target.lstrip("/")
+            else:
+                warnings.append(
+                    f"{rel}: relative link -> {raw_target}; this package writes "
+                    "bundle-relative links starting with /"
                 )
-                continue
-            dest = path.parent / target
+                dest = path.parent / target
             if raw_target.endswith("/") or target.endswith("/"):
                 dest = dest / "index.md"
             if not dest.exists():
@@ -110,8 +235,9 @@ def _collect_link_targets(root: Path) -> dict:
                 continue
             target = urllib.parse.unquote(target)
             if target.startswith("/"):
-                continue
-            dest = src.parent / target
+                dest = root / target.lstrip("/")
+            else:
+                dest = src.parent / target
             if raw_target.endswith("/") or target.endswith("/"):
                 dest = dest / "index.md"
             if dest.exists():
@@ -164,6 +290,8 @@ def strict_checks(root: Path) -> list:
         base = rel.rsplit("/", 1)[-1]
         if base in RESERVED:
             continue  # index.md / log.md are reached structurally
+        if rel == "AGENTS.md":
+            continue  # required at package root; not expected as a linked concept
         if not referrers:
             warns.append(f"[orphan] {rel}: no other page links to it — add a link from the relevant index or concept page")
 
@@ -190,11 +318,32 @@ def strict_checks(root: Path) -> list:
                 "— add key terms (as `- **Term** — def` or `| **Term** | def |`)"
             )
 
-    # 3. Zero-inbound concept/chapter pages (core-thesis reachability hint).
-    for rel, referrers in sorted(inbound.items()):
-        if rel.startswith(("concepts/", "frameworks/", "claims/")) and not referrers:
-            # already reported as orphan; skip duplicate
+    # 3. Trust and citation signals on content pages.
+    for path in sorted(root.rglob("*.md")):
+        if any(part.startswith(".") for part in path.relative_to(root).parts):
             continue
+        if path.name in RESERVED:
+            continue
+        rel = path.relative_to(root).as_posix()
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        yaml_text = frontmatter_of(text)
+        if yaml_text is None:
+            continue  # already an error in shape validation
+
+        if not re.search(r"^generated:", yaml_text, re.M):
+            warns.append(
+                f"[trust] {rel}: no generated: {{ by, at }} — readers cannot tell who "
+                "wrote this or when (§5.2)"
+            )
+
+        source_ids = set(SOURCE_ID_RE.findall(yaml_text))
+        body = text[len(FRONTMATTER_RE.match(text).group(0)):]
+        cited = set(FOOTNOTE_REF_RE.findall(body)) | set(FOOTNOTE_DEF_RE.findall(body))
+        for label in sorted(cited - source_ids):
+            warns.append(
+                f"[citation] {rel}: footnote [^{label}] has no matching sources[].id "
+                "— the label is the join key into sources (§5.1)"
+            )
     return warns
 
 

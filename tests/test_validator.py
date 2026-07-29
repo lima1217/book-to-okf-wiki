@@ -21,9 +21,14 @@ _spec.loader.exec_module(validate_mod)
 # Helpers: build a minimal valid package skeleton in tmp_path.
 # ---------------------------------------------------------------------------
 
+def _root_index(body: str = "# Root index\n") -> str:
+    """Root index text carrying the required version declaration."""
+    return f'---\nokf_version: "0.2"\n---\n{body}'
+
+
 def _write_valid_skeleton(root: Path) -> None:
     """Write the minimum files for shape validation to pass."""
-    (root / "index.md").write_text("# Root index\n")
+    (root / "index.md").write_text(_root_index())
     # AGENTS.md is non-reserved, so it needs frontmatter + a non-empty type.
     (root / "AGENTS.md").write_text(
         "---\ntype: AgentGuide\ntitle: Agents\n---\n# Agents\n"
@@ -63,11 +68,104 @@ class TestDefaultModeUnchanged:
         (tmp_path / "concepts" / "x.md").write_text("# no frontmatter\n")
         assert validate_mod.validate(tmp_path) == 1
 
-    def test_absolute_link_fails(self, tmp_path, capsys):
+    def test_bundle_relative_link_resolves_from_root(self, tmp_path, capsys):
         _write_valid_skeleton(tmp_path)
-        (tmp_path / "index.md").write_text("[Concept](/concepts/x.md)\n")
+        _write_content_page(tmp_path / "concepts" / "x.md", "X")
+        (tmp_path / "index.md").write_text(_root_index("[Concept](/concepts/x.md)\n"))
+        assert validate_mod.validate(tmp_path) == 0
+        assert "link" not in capsys.readouterr().out
+
+    def test_relative_link_warns_without_failing(self, tmp_path, capsys):
+        # OKF v0.2 §6.1 allows both forms; the package writes the /-rooted one.
+        _write_valid_skeleton(tmp_path)
+        _write_content_page(tmp_path / "concepts" / "x.md", "X")
+        (tmp_path / "index.md").write_text(_root_index("[Concept](concepts/x.md)\n"))
+        assert validate_mod.validate(tmp_path) == 0
+        assert "bundle-relative links starting with /" in capsys.readouterr().out
+
+    def test_broken_bundle_relative_link_fails(self, tmp_path):
+        _write_valid_skeleton(tmp_path)
+        (tmp_path / "index.md").write_text(_root_index("[Missing](/concepts/gone.md)\n"))
         assert validate_mod.validate(tmp_path) == 1
-        assert "use a relative path" in capsys.readouterr().out
+
+
+class TestOkfV02Frontmatter:
+    def test_legacy_timestamp_warns_without_failing(self, tmp_path, capsys):
+        _write_valid_skeleton(tmp_path)
+        (tmp_path / "concepts").mkdir()
+        (tmp_path / "concepts" / "x.md").write_text(
+            "---\ntype: Concept\ntimestamp: 2026-06-15T00:00:00Z\n---\n# X\n"
+        )
+        assert validate_mod.validate(tmp_path) == 0
+        assert "generated" in capsys.readouterr().out
+
+    def test_unknown_status_warns(self, tmp_path, capsys):
+        _write_valid_skeleton(tmp_path)
+        (tmp_path / "concepts").mkdir()
+        (tmp_path / "concepts" / "x.md").write_text(
+            "---\ntype: Concept\nstatus: active\n---\n# X\n"
+        )
+        assert validate_mod.validate(tmp_path) == 0
+        assert "status 'active'" in capsys.readouterr().out
+
+    def test_root_index_without_okf_version_fails(self, tmp_path, capsys):
+        _write_valid_skeleton(tmp_path)
+        (tmp_path / "index.md").write_text("# Root\n")
+        assert validate_mod.validate(tmp_path) == 1
+        assert "must declare okf_version" in capsys.readouterr().out
+
+    def test_root_index_wrong_okf_version_fails(self, tmp_path, capsys):
+        _write_valid_skeleton(tmp_path)
+        (tmp_path / "index.md").write_text('---\nokf_version: "0.1"\n---\n# Root\n')
+        assert validate_mod.validate(tmp_path) == 1
+        out = capsys.readouterr().out
+        assert 'expected "0.2"' in out
+
+    def test_declared_root_index_is_quiet(self, tmp_path, capsys):
+        _write_valid_skeleton(tmp_path)
+        assert validate_mod.validate(tmp_path) == 0
+        assert "okf_version" not in capsys.readouterr().out
+
+    def test_legacy_citations_heading_warns(self, tmp_path, capsys):
+        _write_valid_skeleton(tmp_path)
+        (tmp_path / "concepts").mkdir()
+        (tmp_path / "concepts" / "x.md").write_text(
+            "---\ntype: Concept\n---\n# X\n\n结构决定行为。\n\n# 引用\n- full_text.txt L100\n"
+        )
+        assert validate_mod.validate(tmp_path) == 0
+        assert "v0.1 citations heading" in capsys.readouterr().out
+
+    def test_nested_index_frontmatter_warns(self, tmp_path, capsys):
+        _write_valid_skeleton(tmp_path)
+        (tmp_path / "concepts").mkdir()
+        (tmp_path / "concepts" / "index.md").write_text(
+            "---\ntype: Index\n---\n# Concepts\n"
+        )
+        assert validate_mod.validate(tmp_path) == 0
+        assert "only the root index may" in capsys.readouterr().out
+
+    def test_sources_entry_missing_resource_warns(self, tmp_path, capsys):
+        _write_valid_skeleton(tmp_path)
+        (tmp_path / "concepts").mkdir()
+        (tmp_path / "concepts" / "x.md").write_text(
+            "---\ntype: Concept\n"
+            "sources:\n  - id: src-001\n    title: 缺 resource\n"
+            "---\n# X\n"
+        )
+        assert validate_mod.validate(tmp_path) == 0
+        out = capsys.readouterr().out
+        assert "src-001" in out and "missing resource" in out
+
+    def test_sources_entry_with_resource_is_quiet(self, tmp_path, capsys):
+        _write_valid_skeleton(tmp_path)
+        (tmp_path / "concepts").mkdir()
+        (tmp_path / "concepts" / "x.md").write_text(
+            "---\ntype: Concept\n"
+            "sources:\n  - id: src-001\n    resource: /sources/full_text.txt\n"
+            "---\n# X\n"
+        )
+        assert validate_mod.validate(tmp_path) == 0
+        assert "missing resource" not in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +173,19 @@ class TestDefaultModeUnchanged:
 # ---------------------------------------------------------------------------
 
 class TestStrictOrphan:
+    def test_bundle_relative_link_counts_as_inbound(self, tmp_path):
+        # Orphan detection must resolve /-rooted links, or every correctly
+        # linked page would be reported as an orphan.
+        _write_valid_skeleton(tmp_path)
+        _write_content_page(tmp_path / "concepts" / "deep.md", "Deep")
+        _write_content_page(
+            tmp_path / "chapters" / "sub" / "note.md",
+            "Note",
+            body="见[Deep](/concepts/deep.md)。",
+        )
+        inbound = validate_mod._collect_link_targets(tmp_path)
+        assert inbound["concepts/deep.md"] == {"chapters/sub/note.md"}
+
     def test_strict_detects_orphan(self, tmp_path):
         _write_valid_skeleton(tmp_path)
         # an orphan content page nothing links to
@@ -88,7 +199,7 @@ class TestStrictOrphan:
         # concept page linked from the root index
         _write_content_page(tmp_path / "concepts" / "linked.md", "Linked")
         (tmp_path / "index.md").write_text(
-            "# Root\n\n- [Linked](concepts/linked.md)\n"
+            "# Root\n\n- [Linked](/concepts/linked.md)\n"
         )
         warns = validate_mod.strict_checks(tmp_path)
         assert not any("concepts/linked.md" in w and "orphan" in w for w in warns)
@@ -115,7 +226,7 @@ class TestStrictGlossary:
         )
         # link the glossary from index so it isn't reported as an orphan
         (tmp_path / "index.md").write_text(
-            "# Root\n\n- [Terms](glossary/terms.md)\n"
+            "# Root\n\n- [Terms](/glossary/terms.md)\n"
         )
         warns = validate_mod.strict_checks(tmp_path)
         assert not any("[glossary]" in w for w in warns), warns
@@ -129,7 +240,7 @@ class TestStrictGlossary:
             "# 术语表\n\n- **控制** — definition\n"
         )
         (tmp_path / "index.md").write_text(
-            "# Root\n\n- [Terms](glossary/术语.md)\n"
+            "# Root\n\n- [Terms](/glossary/术语.md)\n"
         )
         warns = validate_mod.strict_checks(tmp_path)
         assert not any("[glossary]" in w for w in warns), warns
@@ -155,6 +266,38 @@ class TestStrictGlossary:
         )
         warns = validate_mod.strict_checks(tmp_path)
         assert not any("[glossary]" in w for w in warns), warns
+
+
+class TestStrictTrustAndCitations:
+    def test_strict_warns_missing_generated(self, tmp_path):
+        _write_valid_skeleton(tmp_path)
+        _write_content_page(tmp_path / "concepts" / "x.md", "X")
+        warns = validate_mod.strict_checks(tmp_path)
+        assert any("[trust]" in w and "concepts/x.md" in w for w in warns), warns
+
+    def test_strict_warns_footnote_without_source_id(self, tmp_path):
+        _write_valid_skeleton(tmp_path)
+        (tmp_path / "concepts").mkdir()
+        (tmp_path / "concepts" / "x.md").write_text(
+            "---\ntype: Concept\n"
+            "generated: { by: cursor/model, at: 2026-06-15T00:00:00Z }\n"
+            "sources:\n  - id: src-001\n    resource: ../sources/full_text.txt\n"
+            "---\n# X\n\n断言。[^src-002]\n\n[^src-002]: 出处\n"
+        )
+        warns = validate_mod.strict_checks(tmp_path)
+        assert any("[citation]" in w and "src-002" in w for w in warns), warns
+
+    def test_strict_quiet_when_footnote_matches_source_id(self, tmp_path):
+        _write_valid_skeleton(tmp_path)
+        (tmp_path / "concepts").mkdir()
+        (tmp_path / "concepts" / "x.md").write_text(
+            "---\ntype: Concept\n"
+            "generated: { by: cursor/model, at: 2026-06-15T00:00:00Z }\n"
+            "sources:\n  - id: src-001\n    resource: ../sources/full_text.txt\n"
+            "---\n# X\n\n断言。[^src-001]\n\n[^src-001]: 出处 L12-L20\n"
+        )
+        warns = [w for w in validate_mod.strict_checks(tmp_path) if "concepts/x.md" in w]
+        assert not any("[citation]" in w or "[trust]" in w for w in warns), warns
 
 
 class TestStrictDoesNotAffectExitCode:
